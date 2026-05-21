@@ -1,0 +1,133 @@
+# 아키텍처 & 기술 메모
+
+조사한 기술 정보와 설계 결정을 기록합니다. (조사일: 2026-05-20)
+
+## 핵심 라이브러리: discord.py 2.7.1
+
+- 최신 안정 버전 **2.7.1** (2026-03 릴리스), Python 3.14 호환 수정 포함.
+- **audioop 이슈**: Python 3.13 에서 표준 라이브러리 `audioop` 모듈이 제거됨(PEP 594).
+  discord.py 는 `audioop-lts` 패키지를 fallback 의존성으로 가져오므로,
+  3.13/3.14 에서도 설치만 하면 자동 해결된다. (이번 설치에서 `audioop-lts 0.2.2` 자동 포함 확인)
+- 음악/보이스 기능을 쓰지 않으므로 `discord.py[voice]` extra 는 설치하지 않는다.
+
+## 슬래시 커맨드 모델 (app_commands)
+
+- discord.py 2.0+ 는 `app_commands`(슬래시 커맨드)를 1급으로 지원.
+- `commands.Bot` 은 `CommandTree` 인스턴스를 `bot.tree` 로 가진다.
+- **동기화(sync)**: 코드상의 커맨드 정의를 디스코드 API에 등록하는 과정.
+  - 글로벌 sync 는 전파에 최대 1시간 → 개발/단일 서버엔 부적합.
+  - **길드 sync 는 즉시 반영** → 단일 길드 전용 봇에 적합.
+- 본 프로젝트는 `setup_hook` 에서:
+  ```python
+  self.tree.copy_global_to(guild=self.guild_object)  # 글로벌 정의를 길드로 복사
+  await self.tree.sync(guild=self.guild_object)       # 길드에만 등록
+  ```
+
+## 단일 길드(서버) 전용 보장
+
+두 겹으로 강제한다:
+
+1. **커맨드 노출 제한**: 위 길드 sync 로 지정 서버에서만 커맨드가 보임.
+2. **다른 서버 자동 탈퇴**: `on_ready` 에서 `GUILD_ID` 가 아닌 길드에 들어가 있으면 `guild.leave()`.
+
+추가로 `/role` 그룹은 `guild_only=True` 로 DM 사용을 막는다.
+
+## 코그(Cog) 기반 모듈화
+
+- 기능을 `cogs/` 의 독립 모듈로 분리, `setup_hook` 에서 `load_extension` 으로 로드.
+- 각 코그는 `async def setup(bot)` 를 노출해야 한다.
+- 장점: 기능별 파일 분리, 재시작 없이 reload 가능(`bot.reload_extension`), 에러 격리.
+
+| 코그 | 책임 |
+| --- | --- |
+| `general` | 핑/서버정보 등 기본 |
+| `roles` | 역할 부여/회수 + 역할 위계·권한 검증 |
+| `external_api` | 외부 HTTP API 연동 (aiohttp 세션 공유) |
+
+## 권한 & 인텐트
+
+- **인텐트**: `Intents.default()` + `members=True`.
+  `members` 는 privileged intent → Developer Portal 에서 별도 활성화 필요.
+- **명령 권한**: `/role` 그룹에 `default_permissions(manage_roles=True)` 적용.
+  서버 관리자가 디스코드 UI 에서 명령별 권한을 추가 조정할 수 있다.
+- **역할 위계 검증**: 봇 최상위 역할보다 높은/같은 역할, `@everyone`, 통합 관리 역할은
+  변경 불가하도록 `roles.py` 의 `_can_manage` 에서 사전 차단.
+
+## 외부 API 연동 패턴
+
+- **Open-Meteo** 선택 이유: API 키가 필요 없어 즉시 동작, 지오코딩+예보 무료 제공.
+- aiohttp `ClientSession` 을 코그 생성 시 1개 만들어 재사용, `cog_unload` 에서 close.
+- 다른 키 기반 API 추가 시: 키를 `.env` 에 두고 `config.py` 에서 로드 → 코그에 주입.
+
+## 비동기/에러 처리
+
+- 모든 명령은 코루틴. 외부 호출 전 `interaction.response.defer()` 로 3초 응답 제한 회피.
+- 코그 단위 에러 핸들러(`cog_app_command_error` / `@cmd.error`)로 사용자 친화적 메시지 반환.
+
+## 데이터 영속 (PostgreSQL / asyncpg)
+
+- **배포 전제**: GitHub 연동 + **Oracle Cloud 평생 무료 VM** 에서 24시간 구동
+  (Koyeb 무료 티어는 2026년 Mistral AI 인수로 신규 가입 종료 → VM 방식으로 전환).
+- **결정**: 외부 관리형 **PostgreSQL(Neon 무료 티어)** 사용. VM 디스크는 영속적이지만,
+  Oracle이 유휴 인스턴스를 회수할 수 있어 데이터를 외부(Neon)에 두면 인스턴스 손실에도 안전.
+  (VM에서는 로컬 SQLite도 가능하나 회수 대비상 Neon 유지 권장)
+- **드라이버**: `asyncpg` (Python 3.14 cp314 휠 제공, 빌드 불필요). 풀(`create_pool`)로 사용.
+- **스키마** (`database.py`, 최초 기동 시 자동 생성):
+  - `guild_config(guild_id PK, log_channel_id)` — 로그 채널 ID 영속
+  - `voice_activity(guild_id, user_id, last_active, total_seconds, PK(guild_id,user_id))` — 음성 활동
+  - `member_log(guild_id, user_id, join_count, leave_count, last_joined_at, last_left_at, PK(guild_id,user_id))`
+    — 서버(길드) 입·퇴장 횟수. `record_member_join/leave` 가 `RETURNING` 으로 누적값을 돌려줘 로그에 즉시 표시
+- 모든 갱신은 `INSERT ... ON CONFLICT DO UPDATE`(upsert). `last_active` 는 `GREATEST` 로
+  과거 값으로 덮이지 않게 한다.
+
+## 음성 활동 추적 설계
+
+- **이벤트**: `on_voice_state_update` (voice_states 인텐트는 기본 포함, 비권한).
+  - 입장: 세션 시작 시각 기록 + `last_active` 갱신 + 로그 채널 기록
+  - 퇴장: 체류시간 계산해 `total_seconds` 합산 + `last_active` 갱신 + 로그 기록
+  - 이동/음소거 등: 활동 유지로 보고 `last_active` 만 갱신
+- **하트비트 루프(15분)**: 보이스에 계속 머무는 멤버는 입·퇴장 이벤트가 없어 `last_active`
+  가 갱신되지 않는다 → 주기적으로 현재 접속자 `last_active` 를 갱신해 "장기 접속 = 활동"을 반영.
+- **기동 스캔(on_ready)**: 봇 재시작 시 이미 보이스에 있는 멤버를 즉시 활동 처리(이벤트 누락 보완).
+  VM 재시작/재배포가 잦아도 활동 추적이 끊기지 않는다.
+
+## 서버(길드) 입·퇴장 추적
+
+- **이벤트**: `on_member_join` / `on_member_remove` (members 인텐트 필요, 이미 활성).
+  멤버가 서버를 나갔다 다시 들어온 횟수를 `member_log` 에 누적한다(자진 탈퇴·추방 모두 퇴장으로 집계).
+- 로그 채널에 `📥 서버 입장 (누적 N회)` / `📤 서버 퇴장 (누적 N회)` 로 즉시 기록.
+- **한계**: 추적 시작 이전부터 있던 멤버는 다시 나갔다 들어오기 전까지 기록이 없다(관측된 이벤트만 집계).
+  음성 활동(`voice_activity`)과는 별개 테이블로 관리해 개념을 분리.
+
+## 로그 채널 = 가시적 기록 + 안내 채널
+
+- `/setup-log` 가 `@everyone` 비공개 + 봇 쓰기 가능한 채널을 생성(관리자는 권한상 열람 가능).
+- 음성 활동이 사람이 읽을 수 있게 이 채널에 기록되고, 비활성 보고도 이곳에 게시된다.
+  (실제 질의용 데이터는 Postgres에 있고, 채널은 감사 로그·안내 역할)
+
+## 비활성 안내 & 멘션 처리
+
+- `/inactive [일수]` 와 자동 보고(`tasks.loop`, 기본 168시간)가 동일 로직 사용.
+- 대상 = (봇 제외 전체 멤버) 중 `last_active` 가 없거나 기준일 이전인 멤버.
+  멤버 캐시는 `guild.chunk()` 로 보강.
+- 출력은 `<@user_id>` (= `@username`) 형식으로 **클릭 가능**하되,
+  `AllowedMentions.none()` 으로 **실제 알림은 보내지 않는다**(비활성자 무더기 핑 방지).
+- 2000자 제한 대응으로 결과를 페이지 단위로 분할 전송.
+
+## 상시 가동
+
+- **현재 방식(VM)**: Oracle VM에서 `systemd`(`deploy/harubot.service`)로 구동.
+  `Restart=always` 로 크래시·재부팅 시 자동 복구, 부팅 시 자동 시작. 인바운드 포트 불필요.
+- **keepalive(선택)**: 일부 PaaS는 인바운드 HTTP 헬스체크를 요구한다. `keepalive.py` 는
+  `PORT` 환경변수가 있을 때만 최소 HTTP 서버(`/`, `/health` → 200)를 띄운다.
+  VM/로컬에선 `PORT` 가 없어 자동 비활성 → 코드 분기 없이 어디서나 동작.
+
+## 알려진 제약 / 향후 고려
+
+- 토큰/`DATABASE_URL` 은 `.env`(로컬)·Koyeb Secret(운영)로만 관리, 절대 커밋 금지.
+- `total_seconds` 는 봇 재시작 시 진행 중이던 세션 시간을 일부 놓칠 수 있어 **근사치**다.
+  비활성 판정의 핵심인 `last_active` 는 입장·이동·하트비트·기동 스캔으로 비교적 정확.
+- 활동 로그를 모든 입·퇴장마다 채널에 남기므로, 매우 큰 서버에서는 메시지가 많아질 수 있다
+  (필요 시 입장만 기록하도록 축소 가능).
+- 명령 수가 늘면 `/role` 처럼 그룹으로 묶어 25개 제한 안에서 관리.
+- 향후: AFK 채널 제외 옵션, 비활성 멤버 자동 역할 부여/추방 등 액션 연계 고려.

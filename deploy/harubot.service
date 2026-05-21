@@ -1,0 +1,17 @@
+[Unit]
+Description=HaruBot Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Oracle Ubuntu 이미지 기본 사용자는 ubuntu, Oracle Linux는 opc → 환경에 맞게 수정
+User=ubuntu
+WorkingDirectory=/home/ubuntu/HaruBot
+# .env 는 python-dotenv 가 WorkingDirectory 에서 자동 로드
+ExecStart=/home/ubuntu/HaruBot/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

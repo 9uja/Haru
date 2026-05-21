@@ -1,0 +1,75 @@
+# HaruBot
+
+단일 디스코드 서버(길드) 전용 봇. Python + [discord.py](https://github.com/Rapptz/discord.py) 기반이며,
+슬래시 커맨드로 동작합니다.
+
+## 기능
+
+| 명령어 | 설명 | 권한 |
+| --- | --- | --- |
+| `/ping` | 봇 응답 지연(왕복·게이트웨이) 확인 | 누구나 |
+| `/info` | 현재 서버 정보 표시 | 누구나 |
+| `/role add <멤버> <역할>` | 멤버에게 역할 부여 | 역할 관리 |
+| `/role remove <멤버> <역할>` | 멤버 역할 회수 | 역할 관리 |
+| `/weather <도시>` | 도시의 현재 날씨 조회 (Open-Meteo, 키 불필요) | 누구나 |
+| `/setup-log [이름]` | 봇 전용(비공개) 로그 채널 생성 | 채널 관리 |
+| `/inactive [일수]` | 일정 기간 음성 비활성 멤버를 @멘션으로 안내 | 서버 관리 |
+| `/activity` | 전체 멤버를 `@username — 최근 활동: N일 전` 형식으로 조회 | 서버 관리 |
+| `/stats [멤버]` | 멤버 통계(서버 입·퇴장 횟수, 누적 음성 체류시간, 최근 활동) | 누구나 |
+
+### 음성 활동 추적 & 비활성 안내
+- 음성 채널 입장/퇴장을 로그 채널에 기록하고, 멤버별 마지막 활동 시각·누적 체류시간을 **PostgreSQL** 에 영속화.
+- 서버(길드) 입·퇴장(나갔다 재입장)을 감지해 멤버별 입·퇴장 횟수를 누적 기록(`/stats` 로 조회).
+- 한 달(기본 30일) 이상 음성 활동이 없는 멤버를 `/inactive` 또는 **자동 정기 보고**(기본 매주)로 안내.
+- 안내 목록은 `@username`(클릭 가능·무음 멘션) 형식이라 관리자가 바로 상호작용 가능.
+
+## 빠른 시작
+
+```powershell
+# 1. 의존성 설치 (가상환경 권장)
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 2. 환경 변수 설정 (토큰, 길드 ID, DATABASE_URL 입력)
+Copy-Item .env.example .env
+
+# 3. 실행
+.\.venv\Scripts\python.exe bot.py
+```
+
+> 음성 활동 저장에 PostgreSQL이 필요합니다. 무료 [Neon](https://neon.tech) DB 한 개면 충분합니다.
+> 토큰 발급, DB 준비, 인텐트/권한, 봇 초대 방법은 [docs/SETUP.md](docs/SETUP.md)를 참고하세요.
+
+## 프로젝트 구조
+
+```
+HaruBot/
+├── bot.py              # 진입점: 봇 클래스, 코그 로드, 길드 동기화, DB/헬스서버 수명관리
+├── config.py           # .env 로딩 및 설정값
+├── database.py         # PostgreSQL 데이터 계층 (asyncpg)
+├── keepalive.py        # (선택) PaaS 헬스체크용 HTTP 서버 (PORT 있을 때만 작동)
+├── requirements.txt
+├── Dockerfile          # 컨테이너 배포용 (VM/Docker 공통)
+├── start.sh            # 무료 봇 패널(Wispbyte 등)용 시작 스크립트
+├── .env.example        # 환경 변수 템플릿 (.env 는 git 제외)
+├── deploy/
+│   └── harubot.service # systemd 유닛 (VM 24시간 구동·자동 재시작)
+├── cogs/               # 기능 모듈
+│   ├── general.py      # /ping, /info
+│   ├── roles.py        # /role add, /role remove
+│   ├── external_api.py # /weather (Open-Meteo 연동)
+│   └── voice_log.py    # 음성 활동 추적, /setup-log, /inactive, /activity, 자동 보고
+└── docs/
+    ├── SETUP.md        # 토큰 발급·DB·실행·초대 가이드
+    ├── DEPLOY.md       # Oracle Cloud 무료 VM + Neon 24시간 배포 가이드
+    ├── ARCHITECTURE.md # 기술 결정·구조 설명
+    └── PROGRESS.md     # 개발 진행 로그
+```
+
+## 환경
+
+- Python 3.14 / discord.py 2.7.1 / asyncpg 0.31 에서 확인됨 (배포 컨테이너는 Python 3.12)
+- 데이터 저장: 외부 PostgreSQL(예: Neon 무료 티어). `DATABASE_URL` 필요
+- 음악(보이스 재생) 기능은 사용하지 않으므로 `[voice]` extra 불필요
+- 24시간 무료 운영(카드 불필요): **Wispbyte 무료 패널 + Neon Postgres**.
+  더 견고하게는 Oracle Cloud 무료 VM. 자세한 비교/절차는 [docs/DEPLOY.md](docs/DEPLOY.md)
