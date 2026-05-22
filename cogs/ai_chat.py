@@ -75,7 +75,16 @@ class AIChat(commands.Cog):
             body = prompt[len(TRANSLATE_KEYWORD):].strip()
             first, _, rest = body.partition(" ")
             if first in LANG_MAP and rest.strip():
-                return f"다음 텍스트를 {LANG_MAP[first]}로 번역해줘:\n\n{rest.strip()}", TRANSLATE_SYSTEM
+                target, text = LANG_MAP[first], rest.strip()
+                if target == "일본어":
+                    # 일본어는 번역문 + 한글 발음을 함께 표기
+                    return (
+                        "다음 텍스트를 일본어로 번역하고, 그 일본어 문장의 발음을 한글로 적어줘.\n"
+                        "다른 설명 없이 아래 두 줄 형식으로만 출력:\n"
+                        "<일본어 번역>\n(<한글 발음>)\n\n"
+                        f"텍스트: {text}"
+                    ), TRANSLATE_SYSTEM
+                return f"다음 텍스트를 {target}로 번역해줘:\n\n{text}", TRANSLATE_SYSTEM
             return (
                 f"다음 텍스트가 한국어면 영어로, 아니면 한국어로 번역해줘:\n\n{body}",
                 TRANSLATE_SYSTEM,

@@ -56,7 +56,8 @@ GEMINI_API_KEY=       # (선택) AI 대화 기능용
 
 ### (선택) AI 대화 기능 — Google Gemini
 채팅창에 **`하루야 <메시지>`** 로 말하면 AI가 답합니다(예: `하루야 오늘 기분 어때?`).
-번역도 됩니다: `하루야 번역 hello` (자동), `하루야 번역 일본어 안녕하세요` (지정). 쓰려면:
+번역도 됩니다: `하루야 번역 hello` (자동), `하루야 번역 일본어 안녕하세요` (지정).
+일본어로 번역하면 **번역문 아래에 한글 발음**도 함께 표기됩니다. 쓰려면:
 1. **MESSAGE CONTENT INTENT** 활성화(위 1번 참고) — 메시지 본문을 읽어야 하므로 필수
 2. [Google AI Studio](https://aistudio.google.com/apikey) 접속(신용카드 불필요) → **Create API key**
 3. 발급된 키를 `.env` 의 `GEMINI_API_KEY` 에 입력 (없으면 봇은 정상 동작하되 AI만 안내 메시지 출력)
