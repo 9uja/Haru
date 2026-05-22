@@ -118,10 +118,10 @@ class AIChat(commands.Cog):
         try:
             async with message.channel.typing():
                 answer = await self._ask(user_prompt, system)
-        except Exception as exc:  # noqa: BLE001 - 사용자에게 사유 전달
+        except Exception:  # noqa: BLE001 - 상세는 로그로만, 사용자에겐 통일 문구
             log.warning("AI 호출 실패", exc_info=True)
             await message.reply(
-                f"AI 응답에 실패했습니다: {exc}", mention_author=False, allowed_mentions=SILENT
+                "지금은 응답할 수 없습니다.", mention_author=False, allowed_mentions=SILENT
             )
             return
 
