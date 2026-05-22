@@ -20,6 +20,7 @@ from views import MemberListView, build_static_embed, days_ago
 log = logging.getLogger(__name__)
 
 SILENT = discord.AllowedMentions.none()  # 멘션을 클릭 가능하게 렌더하되 실제 알림은 보내지 않음
+DORMANT_ROLE_NAME = "휴면"  # 비활성 멤버 표시용 역할 이름
 
 
 def _fmt_duration(seconds: int) -> str:
@@ -38,6 +39,19 @@ def _fmt_duration(seconds: int) -> str:
 
 
 class VoiceLog(commands.Cog):
+    dormant = app_commands.Group(
+        name="dormant",
+        description="비활성(휴면) 멤버 관리",
+        default_permissions=discord.Permissions(manage_roles=True),
+        guild_only=True,
+    )
+    dormant_ko = app_commands.Group(
+        name="휴면",
+        description="비활성(휴면) 멤버 관리",
+        default_permissions=discord.Permissions(manage_roles=True),
+        guild_only=True,
+    )
+
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.db = bot.db
@@ -106,6 +120,7 @@ class VoiceLog(commands.Cog):
         if joined:
             self.session_starts[key] = now
             await self.db.touch_active(member.guild.id, member.id, now)
+            await self._clear_dormant(member)  # 활동 복귀 시 휴면 역할 자동 해제
             await self._log(f"🔊 {member.mention} 음성 입장 — **{after.channel.name}**")
         elif left:
             start = self.session_starts.pop(key, None)
@@ -317,6 +332,123 @@ class VoiceLog(commands.Cog):
     @app_commands.describe(member="대상 멤버 (생략 시 본인)")
     async def stats_ko(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
         await self._stats(interaction, member)
+
+    # ------------------------------------------------------------------ 휴면(비활성) 관리
+    async def _get_or_create_dormant_role(self, guild: discord.Guild) -> discord.Role:
+        role = discord.utils.get(guild.roles, name=DORMANT_ROLE_NAME)
+        if role is None:
+            role = await guild.create_role(
+                name=DORMANT_ROLE_NAME, colour=discord.Colour.dark_grey(), reason="비활성(휴면) 표시"
+            )
+        return role
+
+    async def _clear_dormant(self, member: discord.Member) -> None:
+        role = discord.utils.get(member.guild.roles, name=DORMANT_ROLE_NAME)
+        if role is not None and role in member.roles:
+            try:
+                await member.remove_roles(role, reason="음성 활동 복귀")
+            except discord.HTTPException:
+                pass
+
+    async def _dormant_set(
+        self, interaction: discord.Interaction, days: Optional[int], dm: bool
+    ) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("서버에서만 사용할 수 있습니다.", ephemeral=True)
+            return
+        days = days if days and days > 0 else self.settings.inactive_days
+        await interaction.response.defer(ephemeral=True)
+        try:
+            role = await self._get_or_create_dormant_role(guild)
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "'역할 관리(Manage Roles)' 권한이 필요합니다.", ephemeral=True
+            )
+            return
+
+        rows = await self._collect_inactive(guild, days)
+        assigned = dmed = failed = 0
+        for member, _last in rows:
+            if role not in member.roles:
+                try:
+                    await member.add_roles(role, reason=f"{days}일+ 비활성")
+                    assigned += 1
+                except discord.HTTPException:
+                    failed += 1
+                    continue
+            if dm:
+                try:
+                    await member.send(
+                        f"안녕하세요! **{guild.name}** 서버에서 {days}일 이상 음성 활동이 없어 '휴면'으로 표시되었어요. 다시 들러주세요 🙂"
+                    )
+                    dmed += 1
+                except discord.HTTPException:
+                    pass  # DM 닫혀 있으면 무시
+
+        msg = f"대상 {len(rows)}명 중 휴면 역할 부여 {assigned}명"
+        if dm:
+            msg += f", DM 발송 {dmed}명"
+        if failed:
+            msg += f", 실패 {failed}명(봇 역할 위계/권한 확인)"
+        await interaction.followup.send(msg, ephemeral=True)
+
+    async def _dormant_clear(self, interaction: discord.Interaction) -> None:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("서버에서만 사용할 수 있습니다.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        role = discord.utils.get(guild.roles, name=DORMANT_ROLE_NAME)
+        if role is None:
+            await interaction.followup.send("휴면 역할이 없습니다.", ephemeral=True)
+            return
+        if not guild.chunked:
+            await guild.chunk()
+        cleared = 0
+        for member in list(role.members):
+            try:
+                await member.remove_roles(role, reason="휴면 일괄 해제")
+                cleared += 1
+            except discord.HTTPException:
+                pass
+        await interaction.followup.send(f"휴면 역할 해제 {cleared}명", ephemeral=True)
+
+    @dormant.command(name="set", description="비활성 멤버에게 '휴면' 역할을 부여합니다.")
+    @app_commands.describe(days="기준 일수(미지정 시 기본값)", dm="DM 경고도 보낼지 여부")
+    async def dormant_set(
+        self, interaction: discord.Interaction, days: Optional[int] = None, dm: bool = False
+    ) -> None:
+        await self._dormant_set(interaction, days, dm)
+
+    @dormant.command(name="clear", description="모든 멤버의 '휴면' 역할을 해제합니다.")
+    async def dormant_clear(self, interaction: discord.Interaction) -> None:
+        await self._dormant_clear(interaction)
+
+    @dormant_ko.command(name="표시", description="비활성 멤버에게 '휴면' 역할을 부여합니다.")
+    @app_commands.describe(days="기준 일수(미지정 시 기본값)", dm="DM 경고도 보낼지 여부")
+    async def dormant_set_ko(
+        self, interaction: discord.Interaction, days: Optional[int] = None, dm: bool = False
+    ) -> None:
+        await self._dormant_set(interaction, days, dm)
+
+    @dormant_ko.command(name="해제", description="모든 멤버의 '휴면' 역할을 해제합니다.")
+    async def dormant_clear_ko(self, interaction: discord.Interaction) -> None:
+        await self._dormant_clear(interaction)
+
+    async def cog_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        if isinstance(error, app_commands.MissingPermissions):
+            msg = "이 명령을 사용할 권한이 없습니다."
+        elif isinstance(error, discord.Forbidden):
+            msg = "봇 권한이 부족합니다(역할 위계·권한 확인)."
+        else:
+            msg = f"오류가 발생했습니다: {error}"
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
 
     # ------------------------------------------------------------------ loops
     @tasks.loop(hours=168)

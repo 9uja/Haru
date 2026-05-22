@@ -13,9 +13,10 @@
 좌측 **OAuth2 > URL Generator** 에서:
 
 - **Scopes**: `bot`, `applications.commands`
-- **Bot Permissions**: `Manage Channels`, `Send Messages`, `Embed Links`, `Read Messages/View Channels`
+- **Bot Permissions**: `Manage Channels`, `Manage Roles`, `Send Messages`, `Embed Links`, `Read Messages/View Channels`
 
-> `Manage Channels` 는 `/setup-log` 로 로그 채널을 생성하기 위해 필요합니다.
+> `Manage Channels` 는 `/setup-log`, `Manage Roles` 는 `/휴면`('휴면' 역할 부여/해제)에 필요합니다.
+> 봇 역할이 '휴면' 역할보다 **위**에 있어야 부여됩니다(서버 설정 > 역할에서 위로 이동).
 > 음성 활동 추적에 쓰는 Voice States 인텐트는 기본 인텐트라 별도 포털 설정이 필요 없습니다.
 
 생성된 URL로 접속해 대상 서버에 초대합니다.
@@ -54,7 +55,8 @@ GEMINI_API_KEY=       # (선택) AI 대화 기능용
 ```
 
 ### (선택) AI 대화 기능 — Google Gemini
-채팅창에 **`하루야 <메시지>`** 로 말하면 AI가 답합니다(예: `하루야 오늘 기분 어때?`). 쓰려면:
+채팅창에 **`하루야 <메시지>`** 로 말하면 AI가 답합니다(예: `하루야 오늘 기분 어때?`).
+번역도 됩니다: `하루야 번역 hello` (자동), `하루야 번역 일본어 안녕하세요` (지정). 쓰려면:
 1. **MESSAGE CONTENT INTENT** 활성화(위 1번 참고) — 메시지 본문을 읽어야 하므로 필수
 2. [Google AI Studio](https://aistudio.google.com/apikey) 접속(신용카드 불필요) → **Create API key**
 3. 발급된 키를 `.env` 의 `GEMINI_API_KEY` 에 입력 (없으면 봇은 정상 동작하되 AI만 안내 메시지 출력)

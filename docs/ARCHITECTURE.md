@@ -71,6 +71,15 @@
 - Google **Gemini**(`gemini-2.5-flash-lite`) 무료 API를 기존 `aiohttp` 로 REST 호출(새 의존성 0).
 - `GEMINI_API_KEY` 는 선택값 — 없으면 봇은 정상 동작하고 트리거 시 안내만 출력.
 - 답변은 일반 텍스트로 `reply`(2000자 초과 시 분할), 멘션 무음.
+- **번역**: `하루야 번역 …` 이면 번역 전용 system 프롬프트로 라우팅(자동 KO↔EN, 언어 키워드로 지정 가능).
+
+## 휴면(비활성) 관리
+
+- `/휴면 표시`(영어 `/dormant set`): `_collect_inactive` 결과에 `휴면` 역할 부여(없으면 생성), 선택적 DM 경고.
+- `/휴면 해제`(`/dormant clear`): 역할 보유자 전체에서 해제.
+- **자동 해제**: 휴면 멤버가 음성에 다시 입장하면 `on_voice_state_update` 에서 역할 제거.
+- 역할은 이름(`휴면`)으로 조회/생성 → Manage Roles 권한 + 봇 역할이 휴면 역할보다 위 필요.
+- DM 일괄 발송은 닫힌 DM·레이트리밋에 대비해 실패를 무시하고 진행(기본 dm=False).
 
 ## 데이터 영속 (PostgreSQL / asyncpg)
 
