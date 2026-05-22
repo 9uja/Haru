@@ -1,10 +1,22 @@
-"""PostgreSQL 데이터 계층 (asyncpg). Neon 등 외부 관리형 Postgres 대상."""
+"""PostgreSQL 데이터 계층 (asyncpg). Neon 등 외부 관리형 Postgres 대상.
+
+Neon 무료 티어는 유휴 시 컴퓨트를 일시정지(autosuspend)하므로, 잠든 직후 첫 쿼리는
+콜드 스타트로 연결이 느리거나 끊긴 연결을 잡을 수 있다. 이를 견디기 위해
+연결/일시 오류 시 자동 재시도하고, 유휴 연결은 짧게 회수한다.
+"""
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime
 from typing import Optional
 
 import asyncpg
+
+log = logging.getLogger(__name__)
+
+# 콜드 스타트·네트워크 끊김 등 일시적 오류(TimeoutError 는 OSError 하위)
+RETRY_ERRORS = (OSError, asyncpg.InterfaceError, asyncpg.PostgresConnectionError)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS guild_config (
@@ -34,7 +46,7 @@ CREATE TABLE IF NOT EXISTS member_log (
 
 
 class Database:
-    """asyncpg 연결 풀 래퍼. 음성 활동 기록 및 길드 설정 영속화."""
+    """asyncpg 연결 풀 래퍼. 연결/일시 오류 시 자동 재시도."""
 
     def __init__(self) -> None:
         self._pool: Optional[asyncpg.Pool] = None
@@ -46,19 +58,55 @@ class Database:
         return self._pool
 
     async def connect(self, dsn: str) -> None:
-        # 저사양 호스트 + Neon 무료 연결 한도를 고려해 작은 풀 사용
-        self._pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=3)
-        async with self._pool.acquire() as conn:
-            await conn.execute(SCHEMA)
+        # min_size=0: 유휴 시 연결을 잡지 않아 Neon 이 일시정지(무료 컴퓨트 절약)될 수 있게 함.
+        # max_inactive_connection_lifetime: 유휴 연결을 일찍 회수해 끊긴 연결 사용을 방지.
+        self._pool = await asyncpg.create_pool(
+            dsn=dsn,
+            min_size=0,
+            max_size=3,
+            command_timeout=15,
+            max_inactive_connection_lifetime=30,
+        )
+        await self._run(lambda con: con.execute(SCHEMA))
 
     async def close(self) -> None:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
 
-    # --- 길드 설정 ---
+    # ------------------------------------------------------------ 재시도 래퍼
+    async def _run(self, fn, *, retries: int = 2):
+        """fn(connection) 을 실행하되 일시적 연결 오류 시 지수 백오프로 재시도."""
+        delay = 1.0
+        last_exc: Optional[BaseException] = None
+        for attempt in range(retries + 1):
+            try:
+                async with self.pool.acquire() as con:
+                    return await fn(con)
+            except RETRY_ERRORS as exc:
+                last_exc = exc
+                if attempt < retries:
+                    log.warning("DB 일시 오류, 재시도 %d/%d: %s", attempt + 1, retries, exc)
+                    await asyncio.sleep(delay)
+                    delay *= 2
+        assert last_exc is not None
+        raise last_exc
+
+    async def _execute(self, query: str, *args) -> None:
+        await self._run(lambda con: con.execute(query, *args))
+
+    async def _fetch(self, query: str, *args) -> list[asyncpg.Record]:
+        return await self._run(lambda con: con.fetch(query, *args))
+
+    async def _fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
+        return await self._run(lambda con: con.fetchrow(query, *args))
+
+    async def _fetchval(self, query: str, *args):
+        return await self._run(lambda con: con.fetchval(query, *args))
+
+    # ------------------------------------------------------------ 길드 설정
     async def set_log_channel(self, guild_id: int, channel_id: int) -> None:
-        await self.pool.execute(
+        await self._execute(
             """
             INSERT INTO guild_config (guild_id, log_channel_id)
             VALUES ($1, $2)
@@ -69,14 +117,14 @@ class Database:
         )
 
     async def get_log_channel(self, guild_id: int) -> Optional[int]:
-        return await self.pool.fetchval(
+        return await self._fetchval(
             "SELECT log_channel_id FROM guild_config WHERE guild_id = $1", guild_id
         )
 
-    # --- 음성 활동 ---
+    # ------------------------------------------------------------ 음성 활동
     async def touch_active(self, guild_id: int, user_id: int, when: datetime) -> None:
         """last_active 만 갱신 (입장/하트비트/기동 스캔 시). 과거로 덮어쓰지 않음."""
-        await self.pool.execute(
+        await self._execute(
             """
             INSERT INTO voice_activity (guild_id, user_id, last_active)
             VALUES ($1, $2, $3)
@@ -90,7 +138,7 @@ class Database:
 
     async def add_session(self, guild_id: int, user_id: int, seconds: int, when: datetime) -> None:
         """음성 세션 종료(퇴장) 시 누적 체류시간 합산 + last_active 갱신."""
-        await self.pool.execute(
+        await self._execute(
             """
             INSERT INTO voice_activity (guild_id, user_id, last_active, total_seconds)
             VALUES ($1, $2, $3, $4)
@@ -106,16 +154,16 @@ class Database:
 
     async def get_voice_stats(self, guild_id: int, user_id: int) -> Optional[asyncpg.Record]:
         """단일 멤버의 음성 통계(마지막 활동, 누적 체류시간)."""
-        return await self.pool.fetchrow(
+        return await self._fetchrow(
             "SELECT last_active, total_seconds FROM voice_activity WHERE guild_id = $1 AND user_id = $2",
             guild_id,
             user_id,
         )
 
-    # --- 서버(길드) 입·퇴장 ---
+    # ------------------------------------------------------------ 서버(길드) 입·퇴장
     async def record_member_join(self, guild_id: int, user_id: int, when: datetime) -> int:
         """서버 입장: join_count +1 + last_joined_at 갱신. 누적 입장 횟수를 반환."""
-        return await self.pool.fetchval(
+        return await self._fetchval(
             """
             INSERT INTO member_log (guild_id, user_id, join_count, last_joined_at)
             VALUES ($1, $2, 1, $3)
@@ -131,7 +179,7 @@ class Database:
 
     async def record_member_leave(self, guild_id: int, user_id: int, when: datetime) -> int:
         """서버 퇴장: leave_count +1 + last_left_at 갱신. 누적 퇴장 횟수를 반환."""
-        return await self.pool.fetchval(
+        return await self._fetchval(
             """
             INSERT INTO member_log (guild_id, user_id, leave_count, last_left_at)
             VALUES ($1, $2, 1, $3)
@@ -147,7 +195,7 @@ class Database:
 
     async def get_member_log(self, guild_id: int, user_id: int) -> Optional[asyncpg.Record]:
         """단일 멤버의 서버 입·퇴장 통계."""
-        return await self.pool.fetchrow(
+        return await self._fetchrow(
             """
             SELECT join_count, leave_count, last_joined_at, last_left_at
             FROM member_log WHERE guild_id = $1 AND user_id = $2
@@ -158,7 +206,7 @@ class Database:
 
     async def get_activity_map(self, guild_id: int) -> dict[int, datetime]:
         """길드 내 user_id -> 마지막 활동시각 매핑. 비활성 판정에 사용."""
-        rows = await self.pool.fetch(
+        rows = await self._fetch(
             "SELECT user_id, last_active FROM voice_activity WHERE guild_id = $1", guild_id
         )
         return {r["user_id"]: r["last_active"] for r in rows}

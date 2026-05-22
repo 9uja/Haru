@@ -95,4 +95,5 @@ DB 연결 완료
 | `/setup-log` 실패 | 봇에 Manage Channels 권한 없음 |
 | `members` 관련 오류 | Developer Portal 에서 SERVER MEMBERS INTENT 미활성화 |
 | DB 연결 실패(SSL 등) | `DATABASE_URL` 끝에 `?sslmode=require` 포함 여부 확인, 자격증명/호스트 재확인 |
+| 가끔 DB 타임아웃(`on_voice_state_update` 등) | Neon 무료 티어 일시정지 후 콜드 스타트 — 봇이 자동 재시도하므로 대부분 복구됨. 잦으면 `DATABASE_URL` 을 Neon **pooler** 엔드포인트(`-pooler`)로 사용 |
 | 비활성 목록이 비어 보임 | 멤버 캐시 미완료 — 봇은 `guild.chunk()` 로 보강하지만, 멤버 인텐트 필수 |
