@@ -20,9 +20,11 @@ RETRY_ERRORS = (OSError, asyncpg.InterfaceError, asyncpg.PostgresConnectionError
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS guild_config (
-    guild_id       BIGINT PRIMARY KEY,
-    log_channel_id BIGINT
+    guild_id           BIGINT PRIMARY KEY,
+    log_channel_id     BIGINT,
+    welcome_channel_id BIGINT
 );
+ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS welcome_channel_id BIGINT;
 
 CREATE TABLE IF NOT EXISTS voice_activity (
     guild_id      BIGINT NOT NULL,
@@ -119,6 +121,22 @@ class Database:
     async def get_log_channel(self, guild_id: int) -> Optional[int]:
         return await self._fetchval(
             "SELECT log_channel_id FROM guild_config WHERE guild_id = $1", guild_id
+        )
+
+    async def set_welcome_channel(self, guild_id: int, channel_id: int) -> None:
+        await self._execute(
+            """
+            INSERT INTO guild_config (guild_id, welcome_channel_id)
+            VALUES ($1, $2)
+            ON CONFLICT (guild_id) DO UPDATE SET welcome_channel_id = EXCLUDED.welcome_channel_id
+            """,
+            guild_id,
+            channel_id,
+        )
+
+    async def get_welcome_channel(self, guild_id: int) -> Optional[int]:
+        return await self._fetchval(
+            "SELECT welcome_channel_id FROM guild_config WHERE guild_id = $1", guild_id
         )
 
     # ------------------------------------------------------------ 음성 활동
