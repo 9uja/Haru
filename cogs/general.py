@@ -1,4 +1,4 @@
-"""기본 명령어: 핑, 봇/서버 정보."""
+"""기본 명령어: 핑, 봇/서버 정보. (영어/한국어 이름 동시 제공)"""
 from __future__ import annotations
 
 import time
@@ -12,8 +12,8 @@ class General(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="ping", description="봇의 응답 지연 시간을 확인합니다.")
-    async def ping(self, interaction: discord.Interaction) -> None:
+    # ------------------------------------------------------------ 구현
+    async def _ping(self, interaction: discord.Interaction) -> None:
         start = time.perf_counter()
         await interaction.response.send_message("측정 중...", ephemeral=True)
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -22,8 +22,7 @@ class General(commands.Cog):
             content=f"퐁! 왕복 {elapsed_ms:.0f}ms · 게이트웨이 {gateway_ms:.0f}ms"
         )
 
-    @app_commands.command(name="info", description="현재 서버 정보를 보여줍니다.")
-    async def info(self, interaction: discord.Interaction) -> None:
+    async def _info(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         if guild is None:
             await interaction.response.send_message("서버 안에서만 사용할 수 있습니다.", ephemeral=True)
@@ -37,6 +36,23 @@ class General(commands.Cog):
         if guild.owner:
             embed.add_field(name="소유자", value=guild.owner.mention)
         await interaction.response.send_message(embed=embed)
+
+    # ------------------------------------------------------------ 명령어 (영어/한국어)
+    @app_commands.command(name="ping", description="봇의 응답 지연 시간을 확인합니다.")
+    async def ping(self, interaction: discord.Interaction) -> None:
+        await self._ping(interaction)
+
+    @app_commands.command(name="핑", description="봇의 응답 지연 시간을 확인합니다.")
+    async def ping_ko(self, interaction: discord.Interaction) -> None:
+        await self._ping(interaction)
+
+    @app_commands.command(name="info", description="현재 서버 정보를 보여줍니다.")
+    async def info(self, interaction: discord.Interaction) -> None:
+        await self._info(interaction)
+
+    @app_commands.command(name="정보", description="현재 서버 정보를 보여줍니다.")
+    async def info_ko(self, interaction: discord.Interaction) -> None:
+        await self._info(interaction)
 
 
 async def setup(bot: commands.Bot) -> None:

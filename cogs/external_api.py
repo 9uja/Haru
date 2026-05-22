@@ -29,9 +29,7 @@ class ExternalAPI(commands.Cog):
     async def cog_unload(self) -> None:
         await self.session.close()
 
-    @app_commands.command(name="weather", description="도시의 현재 날씨를 조회합니다.")
-    @app_commands.describe(city="도시 이름 (예: Seoul, 서울, Tokyo)")
-    async def weather(self, interaction: discord.Interaction, city: str) -> None:
+    async def _weather(self, interaction: discord.Interaction, city: str) -> None:
         await interaction.response.defer()
 
         async with self.session.get(
@@ -69,8 +67,18 @@ class ExternalAPI(commands.Cog):
         embed.set_footer(text="데이터 제공: Open-Meteo")
         await interaction.followup.send(embed=embed)
 
-    @weather.error
-    async def weather_error(
+    # ------------------------------------------------------------ 명령어 (영어/한국어)
+    @app_commands.command(name="weather", description="도시의 현재 날씨를 조회합니다.")
+    @app_commands.describe(city="도시 이름 (예: Seoul, 서울, Tokyo)")
+    async def weather(self, interaction: discord.Interaction, city: str) -> None:
+        await self._weather(interaction, city)
+
+    @app_commands.command(name="날씨", description="도시의 현재 날씨를 조회합니다.")
+    @app_commands.describe(city="도시 이름 (예: Seoul, 서울, Tokyo)")
+    async def weather_ko(self, interaction: discord.Interaction, city: str) -> None:
+        await self._weather(interaction, city)
+
+    async def cog_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
         msg = f"날씨 조회 중 오류가 발생했습니다: {error}"

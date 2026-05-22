@@ -1,4 +1,4 @@
-"""역할/멤버 관리 명령어. /role add, /role remove (역할 관리 권한 필요)."""
+"""역할/멤버 관리 명령어. /role add·remove 및 한국어 /역할 추가·제거 (역할 관리 권한 필요)."""
 from __future__ import annotations
 
 import discord
@@ -16,6 +16,12 @@ class Roles(commands.Cog):
         default_permissions=discord.Permissions(manage_roles=True),
         guild_only=True,
     )
+    role_ko = app_commands.Group(
+        name="역할",
+        description="멤버 역할 관리",
+        default_permissions=discord.Permissions(manage_roles=True),
+        guild_only=True,
+    )
 
     def _can_manage(self, guild: discord.Guild, role: discord.Role) -> tuple[bool, str]:
         me = guild.me
@@ -27,13 +33,9 @@ class Roles(commands.Cog):
             return False, "통합(봇/부스트 등)으로 관리되는 역할은 수동으로 변경할 수 없습니다."
         return True, ""
 
-    @role.command(name="add", description="멤버에게 역할을 부여합니다.")
-    @app_commands.describe(member="대상 멤버", role="부여할 역할")
-    async def add(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        role: discord.Role,
+    # ------------------------------------------------------------ 구현
+    async def _add_role(
+        self, interaction: discord.Interaction, member: discord.Member, role: discord.Role
     ) -> None:
         ok, reason = self._can_manage(interaction.guild, role)
         if not ok:
@@ -49,13 +51,8 @@ class Roles(commands.Cog):
             f"{member.mention} 님에게 {role.mention} 역할을 부여했습니다.", ephemeral=True
         )
 
-    @role.command(name="remove", description="멤버의 역할을 회수합니다.")
-    @app_commands.describe(member="대상 멤버", role="회수할 역할")
-    async def remove(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        role: discord.Role,
+    async def _remove_role(
+        self, interaction: discord.Interaction, member: discord.Member, role: discord.Role
     ) -> None:
         ok, reason = self._can_manage(interaction.guild, role)
         if not ok:
@@ -70,6 +67,36 @@ class Roles(commands.Cog):
         await interaction.response.send_message(
             f"{member.mention} 님의 {role.mention} 역할을 회수했습니다.", ephemeral=True
         )
+
+    # ------------------------------------------------------------ 명령어 (영어: /role)
+    @role.command(name="add", description="멤버에게 역할을 부여합니다.")
+    @app_commands.describe(member="대상 멤버", role="부여할 역할")
+    async def add(
+        self, interaction: discord.Interaction, member: discord.Member, role: discord.Role
+    ) -> None:
+        await self._add_role(interaction, member, role)
+
+    @role.command(name="remove", description="멤버의 역할을 회수합니다.")
+    @app_commands.describe(member="대상 멤버", role="회수할 역할")
+    async def remove(
+        self, interaction: discord.Interaction, member: discord.Member, role: discord.Role
+    ) -> None:
+        await self._remove_role(interaction, member, role)
+
+    # ------------------------------------------------------------ 명령어 (한국어: /역할)
+    @role_ko.command(name="추가", description="멤버에게 역할을 부여합니다.")
+    @app_commands.describe(member="대상 멤버", role="부여할 역할")
+    async def add_ko(
+        self, interaction: discord.Interaction, member: discord.Member, role: discord.Role
+    ) -> None:
+        await self._add_role(interaction, member, role)
+
+    @role_ko.command(name="제거", description="멤버의 역할을 회수합니다.")
+    @app_commands.describe(member="대상 멤버", role="회수할 역할")
+    async def remove_ko(
+        self, interaction: discord.Interaction, member: discord.Member, role: discord.Role
+    ) -> None:
+        await self._remove_role(interaction, member, role)
 
     async def cog_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError

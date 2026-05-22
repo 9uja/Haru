@@ -171,11 +171,8 @@ class VoiceLog(commands.Cog):
         result.sort(key=lambda t: (t[1] is not None, t[1] or oldest))
         return result
 
-    # ------------------------------------------------------------------ commands
-    @app_commands.command(name="setup-log", description="봇 전용 로그 채널을 생성합니다.")
-    @app_commands.default_permissions(manage_channels=True)
-    @app_commands.describe(name="생성할 채널 이름 (기본: harubot-log)")
-    async def setup_log(self, interaction: discord.Interaction, name: str = "harubot-log") -> None:
+    # ------------------------------------------------------------------ 구현
+    async def _setup_log(self, interaction: discord.Interaction, name: str) -> None:
         guild = interaction.guild
         if guild is None:
             await interaction.response.send_message("서버에서만 사용할 수 있습니다.", ephemeral=True)
@@ -211,10 +208,7 @@ class VoiceLog(commands.Cog):
             f"로그 채널 {channel.mention} 을(를) 생성했습니다. 관리자만 볼 수 있습니다.", ephemeral=True
         )
 
-    @app_commands.command(name="inactive", description="일정 기간 이상 음성 활동이 없는 멤버를 조회합니다.")
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.describe(days="기준 일수 (미지정 시 기본 설정값)")
-    async def inactive(self, interaction: discord.Interaction, days: Optional[int] = None) -> None:
+    async def _inactive(self, interaction: discord.Interaction, days: Optional[int]) -> None:
         guild = interaction.guild
         if guild is None:
             await interaction.response.send_message("서버에서만 사용할 수 있습니다.", ephemeral=True)
@@ -234,9 +228,7 @@ class VoiceLog(commands.Cog):
             embed=view.build_embed(), view=view, ephemeral=True
         )
 
-    @app_commands.command(name="activity", description="전체 멤버의 음성 활동 현황을 확인합니다.")
-    @app_commands.default_permissions(manage_guild=True)
-    async def activity(self, interaction: discord.Interaction) -> None:
+    async def _activity(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         if guild is None:
             await interaction.response.send_message("서버에서만 사용할 수 있습니다.", ephemeral=True)
@@ -253,10 +245,8 @@ class VoiceLog(commands.Cog):
             embed=view.build_embed(), view=view, ephemeral=True
         )
 
-    @app_commands.command(name="stats", description="멤버의 음성 활동 통계(입장/퇴장 횟수 등)를 봅니다.")
-    @app_commands.describe(member="대상 멤버 (생략 시 본인)")
-    async def stats(
-        self, interaction: discord.Interaction, member: Optional[discord.Member] = None
+    async def _stats(
+        self, interaction: discord.Interaction, member: Optional[discord.Member]
     ) -> None:
         guild = interaction.guild
         if guild is None:
@@ -282,6 +272,51 @@ class VoiceLog(commands.Cog):
         embed.add_field(name="누적 음성 체류시간", value=_fmt_duration(total))
         embed.add_field(name="최근 음성 활동", value=days_ago(last))
         await interaction.response.send_message(embed=embed)
+
+    # ------------------------------------------------------------------ 명령어 (영어/한국어)
+    @app_commands.command(name="setup-log", description="봇 전용 로그 채널을 생성합니다.")
+    @app_commands.default_permissions(manage_channels=True)
+    @app_commands.describe(name="생성할 채널 이름 (기본: harubot-log)")
+    async def setup_log(self, interaction: discord.Interaction, name: str = "harubot-log") -> None:
+        await self._setup_log(interaction, name)
+
+    @app_commands.command(name="로그설정", description="봇 전용 로그 채널을 생성합니다.")
+    @app_commands.default_permissions(manage_channels=True)
+    @app_commands.describe(name="생성할 채널 이름 (기본: harubot-log)")
+    async def setup_log_ko(self, interaction: discord.Interaction, name: str = "harubot-log") -> None:
+        await self._setup_log(interaction, name)
+
+    @app_commands.command(name="inactive", description="일정 기간 이상 음성 활동이 없는 멤버를 조회합니다.")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(days="기준 일수 (미지정 시 기본 설정값)")
+    async def inactive(self, interaction: discord.Interaction, days: Optional[int] = None) -> None:
+        await self._inactive(interaction, days)
+
+    @app_commands.command(name="비활성", description="일정 기간 이상 음성 활동이 없는 멤버를 조회합니다.")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(days="기준 일수 (미지정 시 기본 설정값)")
+    async def inactive_ko(self, interaction: discord.Interaction, days: Optional[int] = None) -> None:
+        await self._inactive(interaction, days)
+
+    @app_commands.command(name="activity", description="전체 멤버의 음성 활동 현황을 확인합니다.")
+    @app_commands.default_permissions(manage_guild=True)
+    async def activity(self, interaction: discord.Interaction) -> None:
+        await self._activity(interaction)
+
+    @app_commands.command(name="활동", description="전체 멤버의 음성 활동 현황을 확인합니다.")
+    @app_commands.default_permissions(manage_guild=True)
+    async def activity_ko(self, interaction: discord.Interaction) -> None:
+        await self._activity(interaction)
+
+    @app_commands.command(name="stats", description="멤버의 음성 활동 통계(입장/퇴장 횟수 등)를 봅니다.")
+    @app_commands.describe(member="대상 멤버 (생략 시 본인)")
+    async def stats(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
+        await self._stats(interaction, member)
+
+    @app_commands.command(name="통계", description="멤버의 음성 활동 통계(입장/퇴장 횟수 등)를 봅니다.")
+    @app_commands.describe(member="대상 멤버 (생략 시 본인)")
+    async def stats_ko(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
+        await self._stats(interaction, member)
 
     # ------------------------------------------------------------------ loops
     @tasks.loop(hours=168)
