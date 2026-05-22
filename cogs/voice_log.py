@@ -9,16 +9,17 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from views import MemberListView, build_static_embed, days_ago
+
 log = logging.getLogger(__name__)
 
 SILENT = discord.AllowedMentions.none()  # 멘션을 클릭 가능하게 렌더하되 실제 알림은 보내지 않음
-MSG_LIMIT = 1900  # 디스코드 2000자 제한 여유분
 
 
 def _fmt_duration(seconds: int) -> str:
@@ -34,25 +35,6 @@ def _fmt_duration(seconds: int) -> str:
     if not parts:
         parts.append(f"{sec}초")
     return " ".join(parts)
-
-
-def _days_ago(last: Optional[datetime]) -> str:
-    if last is None:
-        return "기록 없음"
-    days = (datetime.now(timezone.utc) - last).days
-    return "오늘" if days <= 0 else f"{days}일 전"
-
-
-def _line_lastseen(member: discord.Member, last: Optional[datetime]) -> str:
-    if last is None:
-        seen = "기록 없음"
-    else:
-        seen = f"{discord.utils.format_dt(last, 'd')} ({discord.utils.format_dt(last, 'R')})"
-    return f"• {member.mention} — 마지막 활동: {seen}\n"
-
-
-def _line_days_ago(member: discord.Member, last: Optional[datetime]) -> str:
-    return f"• {member.mention} — 최근 활동: {_days_ago(last)}\n"
 
 
 class VoiceLog(commands.Cog):
@@ -189,27 +171,6 @@ class VoiceLog(commands.Cog):
         result.sort(key=lambda t: (t[1] is not None, t[1] or oldest))
         return result
 
-    def _paginate(
-        self,
-        header: str,
-        rows: list[tuple[discord.Member, Optional[datetime]]],
-        line_fn: Callable[[discord.Member, Optional[datetime]], str],
-        empty_msg: str = "해당하는 멤버가 없습니다. 🎉",
-    ) -> list[str]:
-        if not rows:
-            return [f"{header}\n{empty_msg}"]
-        pages: list[str] = []
-        buf = header + "\n"
-        for member, last in rows:
-            line = line_fn(member, last)
-            if len(buf) + len(line) > MSG_LIMIT:
-                pages.append(buf)
-                buf = ""
-            buf += line
-        if buf.strip():
-            pages.append(buf)
-        return pages
-
     # ------------------------------------------------------------------ commands
     @app_commands.command(name="setup-log", description="봇 전용 로그 채널을 생성합니다.")
     @app_commands.default_permissions(manage_channels=True)
@@ -263,19 +224,15 @@ class VoiceLog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         rows = await self._collect_inactive(guild, days)
-        header = f"📋 **{days}일 이상 음성 비활성 멤버: {len(rows)}명**"
-        pages = self._paginate(header, rows, _line_lastseen)
-
-        channel = await self._log_channel()
-        if channel is not None:
-            for page in pages:
-                await channel.send(page, allowed_mentions=SILENT)
-            await interaction.followup.send(
-                f"{len(rows)}명을 찾았습니다. {channel.mention} 에 게시했습니다.", ephemeral=True
-            )
-        else:
-            for page in pages:
-                await interaction.followup.send(page, ephemeral=True, allowed_mentions=SILENT)
+        view = MemberListView(
+            author_id=interaction.user.id,
+            title=f"📋 {days}일 이상 음성 비활성 멤버",
+            rows=rows,
+            color=discord.Color.orange(),
+        )
+        view.message = await interaction.followup.send(
+            embed=view.build_embed(), view=view, ephemeral=True
+        )
 
     @app_commands.command(name="activity", description="전체 멤버의 음성 활동 현황을 확인합니다.")
     @app_commands.default_permissions(manage_guild=True)
@@ -287,10 +244,14 @@ class VoiceLog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
         rows = await self._collect_all(guild)
-        header = f"📊 **전체 멤버 음성 활동 현황: {len(rows)}명**"
-        pages = self._paginate(header, rows, _line_days_ago, empty_msg="표시할 멤버가 없습니다.")
-        for page in pages:
-            await interaction.followup.send(page, ephemeral=True, allowed_mentions=SILENT)
+        view = MemberListView(
+            author_id=interaction.user.id,
+            title="📊 전체 멤버 음성 활동 현황",
+            rows=rows,
+        )
+        view.message = await interaction.followup.send(
+            embed=view.build_embed(), view=view, ephemeral=True
+        )
 
     @app_commands.command(name="stats", description="멤버의 음성 활동 통계(입장/퇴장 횟수 등)를 봅니다.")
     @app_commands.describe(member="대상 멤버 (생략 시 본인)")
@@ -319,7 +280,7 @@ class VoiceLog(commands.Cog):
         embed.add_field(name="서버 퇴장 횟수", value=f"{s_leave}회")
         embed.add_field(name="​", value="​")  # 줄맞춤용 빈 칸
         embed.add_field(name="누적 음성 체류시간", value=_fmt_duration(total))
-        embed.add_field(name="최근 음성 활동", value=_days_ago(last))
+        embed.add_field(name="최근 음성 활동", value=days_ago(last))
         await interaction.response.send_message(embed=embed)
 
     # ------------------------------------------------------------------ loops
@@ -331,9 +292,8 @@ class VoiceLog(commands.Cog):
             return
         days = self.settings.inactive_days
         rows = await self._collect_inactive(guild, days)
-        header = f"🔔 [자동 보고] **{days}일 이상 음성 비활성 멤버: {len(rows)}명**"
-        for page in self._paginate(header, rows, _line_lastseen):
-            await channel.send(page, allowed_mentions=SILENT)
+        embed = build_static_embed(f"🔔 [자동 보고] {days}일 이상 음성 비활성 멤버", rows)
+        await channel.send(embed=embed)
 
     @report_loop.before_loop
     async def _before_report(self) -> None:

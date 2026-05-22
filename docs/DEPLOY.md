@@ -45,14 +45,12 @@ REPORT_INTERVAL_HOURS=168
 LOG_LEVEL=INFO
 ```
 
-### A-4. 시작 명령 지정 후 실행
-- 패널의 **Startup Command** 를 다음으로 설정:
-  ```
-  bash start.sh
-  ```
-  (`start.sh` 가 `pip install -r requirements.txt` 후 `python bot.py` 를 실행)
-  - 패널이 `requirements.txt` 를 자동 설치하는 경우엔 시작 파일을 `bot.py` 로만 지정해도 됩니다.
-- **Start** → 콘솔에 `DB 연결 완료`, `슬래시 커맨드 10개 동기화`, `로그인: ...` 이 보이면 성공.
+### A-4. 시작 파일 지정 후 실행
+Wispbyte의 Python egg 는 `requirements.txt` 를 **자동 설치**한 뒤 `python <지정파일>` 을 실행합니다.
+- **Startup** 탭에서 **Python 파일(`PY_FILE`)** 값을 **`bot.py`** 로 지정.
+  - ⚠️ `start.sh` 로 지정하면 egg 가 `python start.sh` 로 실행해 **SyntaxError** 가 납니다.
+    이 패널에서는 `start.sh` 가 필요 없습니다(셸 명령형 startup 을 쓰는 다른 패널 전용).
+- **Start** → 콘솔에 `DB 연결 완료`, `슬래시 커맨드 8개 동기화`, `로그인: ...` 이 보이면 성공.
 
 ### A-5. 업데이트
 파일을 다시 올리거나 Git pull 후, 패널에서 **Restart**.
