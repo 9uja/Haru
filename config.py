@@ -17,6 +17,7 @@ class Settings:
     log_level: str
     inactive_days: int
     report_interval_hours: int
+    gemini_api_key: str | None = None
 
 
 def _require(name: str) -> str:
@@ -49,4 +50,5 @@ def load_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         inactive_days=_int_env("INACTIVE_DAYS", 30),
         report_interval_hours=_int_env("REPORT_INTERVAL_HOURS", 168),
+        gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
     )

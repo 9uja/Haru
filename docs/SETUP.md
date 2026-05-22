@@ -50,7 +50,15 @@ DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
 INACTIVE_DAYS=30
 REPORT_INTERVAL_HOURS=168
 LOG_LEVEL=INFO
+GEMINI_API_KEY=       # (선택) AI 대화 기능용
 ```
+
+### (선택) AI 대화 기능 — Google Gemini
+`/ai`(한국어 `/대화`) 명령을 쓰려면 무료 Gemini 키가 필요합니다(없으면 봇은 정상 동작, 이 명령만 비활성).
+1. [Google AI Studio](https://aistudio.google.com/apikey) 접속(신용카드 불필요) → **Create API key**
+2. 발급된 키를 `.env` 의 `GEMINI_API_KEY` 에 입력
+- 무료 한도: `gemini-2.5-flash-lite` 기준 분당 15회 / 하루 1,000회 정도 → 소규모 서버에 충분
+- 주의: 무료 티어 입력은 모델 개선에 사용될 수 있으니 민감정보는 보내지 마세요.
 
 ## 6. 실행
 

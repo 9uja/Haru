@@ -13,6 +13,7 @@ from keepalive import start_health_server
 INITIAL_COGS = (
     "cogs.general",
     "cogs.voice_log",
+    "cogs.ai_chat",
 )
 
 
