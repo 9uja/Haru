@@ -44,6 +44,17 @@ CREATE TABLE IF NOT EXISTS member_log (
     last_left_at   TIMESTAMPTZ,
     PRIMARY KEY (guild_id, user_id)
 );
+
+-- 유저 경고 기록
+CREATE TABLE IF NOT EXISTS warnings (
+    id           BIGSERIAL PRIMARY KEY,
+    guild_id     BIGINT NOT NULL,
+    user_id      BIGINT NOT NULL,
+    moderator_id BIGINT,
+    reason       TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
 """
 
 
@@ -228,6 +239,37 @@ class Database:
             """,
             guild_id,
             user_id,
+        )
+
+    # ------------------------------------------------------------ 경고
+    async def add_warning(
+        self, guild_id: int, user_id: int, moderator_id: int, reason: str, when: datetime
+    ) -> int:
+        """경고 추가 후 해당 유저의 누적 경고 수를 반환. (1회성 → 재시도 5회)"""
+        await self._execute(
+            "INSERT INTO warnings (guild_id, user_id, moderator_id, reason, created_at)"
+            " VALUES ($1, $2, $3, $4, $5)",
+            guild_id,
+            user_id,
+            moderator_id,
+            reason,
+            when,
+            retries=5,
+        )
+        return await self.get_warning_count(guild_id, user_id)
+
+    async def get_warning_count(self, guild_id: int, user_id: int) -> int:
+        return await self._fetchval(
+            "SELECT count(*) FROM warnings WHERE guild_id = $1 AND user_id = $2", guild_id, user_id
+        ) or 0
+
+    async def get_warnings(self, guild_id: int, user_id: int, limit: int = 5) -> list[asyncpg.Record]:
+        return await self._fetch(
+            "SELECT reason, moderator_id, created_at FROM warnings"
+            " WHERE guild_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT $3",
+            guild_id,
+            user_id,
+            limit,
         )
 
     async def get_activity_map(self, guild_id: int) -> dict[int, datetime]:

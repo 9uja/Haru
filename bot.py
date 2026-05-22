@@ -16,6 +16,7 @@ INITIAL_COGS = (
     "cogs.ai_chat",
     "cogs.fun",
     "cogs.welcome",
+    "cogs.moderation",
 )
 
 

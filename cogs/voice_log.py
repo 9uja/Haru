@@ -282,6 +282,16 @@ class VoiceLog(commands.Cog):
         embed.add_field(name="​", value="​")  # 줄맞춤용 빈 칸
         embed.add_field(name="누적 음성 체류시간", value=_fmt_duration(total))
         embed.add_field(name="최근 음성 활동", value=days_ago(last))
+
+        warn_count = await self.db.get_warning_count(guild.id, target.id)
+        embed.add_field(name="경고 횟수", value=f"{warn_count}회")
+        if warn_count:
+            warns = await self.db.get_warnings(guild.id, target.id, limit=5)
+            lines = [
+                f"• {discord.utils.format_dt(w['created_at'], 'd')} — {w['reason'][:80]}"
+                for w in warns
+            ]
+            embed.add_field(name="최근 경고", value="\n".join(lines)[:1024], inline=False)
         await interaction.response.send_message(embed=embed)
 
     # ------------------------------------------------------------------ 명령어 (영어/한국어)
