@@ -12,8 +12,6 @@ from keepalive import start_health_server
 
 INITIAL_COGS = (
     "cogs.general",
-    "cogs.roles",
-    "cogs.external_api",
     "cogs.voice_log",
 )
 

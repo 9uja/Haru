@@ -40,29 +40,28 @@
 
 | 코그 | 책임 |
 | --- | --- |
-| `general` | 핑/서버정보 등 기본 |
-| `roles` | 역할 부여/회수 + 역할 위계·권한 검증 |
-| `external_api` | 외부 HTTP API 연동 (aiohttp 세션 공유) |
+| `general` | 핑 등 기본 |
+| `voice_log` | 음성/멤버 활동 추적, 로그 채널, 비활성·전체 조회, 통계, 자동 보고 |
+
+> 초기엔 `roles`(역할 관리), `external_api`(날씨) 코그도 있었으나 요구사항 변경으로 제거됨(2026-05-22).
+
+## 명령어 영어/한국어 병행
+
+- 모든 슬래시 커맨드는 영어·한국어 이름을 동시에 제공한다(예: `/ping`·`/핑`, `/inactive`·`/활동확인`).
+- 중복 로직 없이 각 명령이 공통 `_impl` 메서드를 호출하도록 구성.
 
 ## 권한 & 인텐트
 
 - **인텐트**: `Intents.default()` + `members=True`.
-  `members` 는 privileged intent → Developer Portal 에서 별도 활성화 필요.
-- **명령 권한**: `/role` 그룹에 `default_permissions(manage_roles=True)` 적용.
-  서버 관리자가 디스코드 UI 에서 명령별 권한을 추가 조정할 수 있다.
-- **역할 위계 검증**: 봇 최상위 역할보다 높은/같은 역할, `@everyone`, 통합 관리 역할은
-  변경 불가하도록 `roles.py` 의 `_can_manage` 에서 사전 차단.
-
-## 외부 API 연동 패턴
-
-- **Open-Meteo** 선택 이유: API 키가 필요 없어 즉시 동작, 지오코딩+예보 무료 제공.
-- aiohttp `ClientSession` 을 코그 생성 시 1개 만들어 재사용, `cog_unload` 에서 close.
-- 다른 키 기반 API 추가 시: 키를 `.env` 에 두고 `config.py` 에서 로드 → 코그에 주입.
+  `members` 는 privileged intent → Developer Portal 에서 별도 활성화 필요
+  (서버 입·퇴장 추적, `/inactive`·`/activity` 멤버 열거에 필수).
+- **명령 권한**: `default_permissions` 로 `/setup-log`(채널 관리), `/inactive`·`/activity`(서버 관리)
+  를 제한. 서버 관리자가 디스코드 UI 에서 명령별 권한을 추가 조정할 수 있다.
 
 ## 비동기/에러 처리
 
-- 모든 명령은 코루틴. 외부 호출 전 `interaction.response.defer()` 로 3초 응답 제한 회피.
-- 코그 단위 에러 핸들러(`cog_app_command_error` / `@cmd.error`)로 사용자 친화적 메시지 반환.
+- 모든 명령은 코루틴. 외부/지연 작업 전 `interaction.response.defer()` 로 3초 응답 제한 회피.
+- 코그 단위 에러 핸들러(`cog_app_command_error`)로 사용자 친화적 메시지 반환.
 
 ## 데이터 영속 (PostgreSQL / asyncpg)
 

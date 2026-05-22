@@ -13,8 +13,7 @@
 좌측 **OAuth2 > URL Generator** 에서:
 
 - **Scopes**: `bot`, `applications.commands`
-- **Bot Permissions**: `Manage Roles`, `Manage Channels`, `Send Messages`, `Embed Links`,
-  `Read Messages/View Channels`
+- **Bot Permissions**: `Manage Channels`, `Send Messages`, `Embed Links`, `Read Messages/View Channels`
 
 > `Manage Channels` 는 `/setup-log` 로 로그 채널을 생성하기 위해 필요합니다.
 > 음성 활동 추적에 쓰는 Voice States 인텐트는 기본 인텐트라 별도 포털 설정이 필요 없습니다.
@@ -82,7 +81,6 @@ DB 연결 완료
 | --- | --- |
 | `환경 변수 'DISCORD_TOKEN' 가 설정되지 않았습니다` | `.env` 누락 또는 값 비어 있음 |
 | 슬래시 커맨드가 안 보임 | `GUILD_ID` 가 실제 서버와 다름 / 봇이 그 서버에 없음 |
-| `/role` 사용 시 권한 오류 | 봇 역할 위치가 대상 역할보다 아래 / Manage Roles 권한 없음 |
 | `/setup-log` 실패 | 봇에 Manage Channels 권한 없음 |
 | `members` 관련 오류 | Developer Portal 에서 SERVER MEMBERS INTENT 미활성화 |
 | DB 연결 실패(SSL 등) | `DATABASE_URL` 끝에 `?sslmode=require` 포함 여부 확인, 자격증명/호스트 재확인 |

@@ -8,16 +8,12 @@
 | 명령어 | 설명 | 권한 |
 | --- | --- | --- |
 | `/ping` | 봇 응답 지연(왕복·게이트웨이) 확인 | 누구나 |
-| `/info` | 현재 서버 정보 표시 | 누구나 |
-| `/role add <멤버> <역할>` | 멤버에게 역할 부여 | 역할 관리 |
-| `/role remove <멤버> <역할>` | 멤버 역할 회수 | 역할 관리 |
-| `/weather <도시>` | 도시의 현재 날씨 조회 (Open-Meteo, 키 불필요) | 누구나 |
 | `/setup-log [이름]` | 봇 전용(비공개) 로그 채널 생성 | 채널 관리 |
 | `/inactive [일수]` | 음성 비활성 멤버를 임베드로 조회 (◀▶ 페이지·🔃 정렬) | 서버 관리 |
 | `/activity` | 전체 멤버 음성 활동을 임베드로 조회 (◀▶ 페이지·🔃 정렬) | 서버 관리 |
-
-> 모든 명령어는 **한국어 이름**으로도 제공됩니다: `/핑` `/정보` `/날씨` `/역할 추가·제거` `/로그설정` `/비활성` `/활동` `/통계` (기능 동일)
 | `/stats [멤버]` | 멤버 통계(서버 입·퇴장 횟수, 누적 음성 체류시간, 최근 활동) | 누구나 |
+
+> 모든 명령어는 **한국어 이름**으로도 제공됩니다: `/핑` `/로그채널설정` `/활동확인` `/전체확인` `/스탯` (기능 동일)
 
 ### 음성 활동 추적 & 비활성 안내
 - 음성 채널 입장/퇴장을 로그 채널에 기록하고, 멤버별 마지막 활동 시각·누적 체류시간을 **PostgreSQL** 에 영속화.
@@ -58,10 +54,8 @@ HaruBot/
 ├── deploy/
 │   └── harubot.service # systemd 유닛 (VM 24시간 구동·자동 재시작)
 ├── cogs/               # 기능 모듈
-│   ├── general.py      # /ping, /info
-│   ├── roles.py        # /role add, /role remove
-│   ├── external_api.py # /weather (Open-Meteo 연동)
-│   └── voice_log.py    # 음성 활동 추적, /setup-log, /inactive, /activity, 자동 보고
+│   ├── general.py      # /ping (핑)
+│   └── voice_log.py    # 음성/멤버 추적, /setup-log·/inactive·/activity·/stats, 자동 보고
 └── docs/
     ├── SETUP.md        # 토큰 발급·DB·실행·초대 가이드
     ├── DEPLOY.md       # Oracle Cloud 무료 VM + Neon 24시간 배포 가이드
