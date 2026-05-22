@@ -453,14 +453,18 @@ class VoiceLog(commands.Cog):
     # ------------------------------------------------------------------ loops
     @tasks.loop(hours=168)
     async def report_loop(self) -> None:
-        guild = self.bot.get_guild(self.guild_id)
-        channel = await self._log_channel()
-        if guild is None or channel is None:
-            return
-        days = self.settings.inactive_days
-        rows = await self._collect_inactive(guild, days)
-        embed = build_static_embed(f"🔔 [자동 보고] {days}일 이상 음성 비활성 멤버", rows)
-        await channel.send(embed=embed)
+        # DB/네트워크 오류로 루프가 영구 중단되지 않도록 보호 (다음 주기에 재시도)
+        try:
+            guild = self.bot.get_guild(self.guild_id)
+            channel = await self._log_channel()
+            if guild is None or channel is None:
+                return
+            days = self.settings.inactive_days
+            rows = await self._collect_inactive(guild, days)
+            embed = build_static_embed(f"🔔 [자동 보고] {days}일 이상 음성 비활성 멤버", rows)
+            await channel.send(embed=embed)
+        except Exception:
+            log.warning("자동 보고 실패(다음 주기에 재시도)", exc_info=True)
 
     @report_loop.before_loop
     async def _before_report(self) -> None:
@@ -473,10 +477,14 @@ class VoiceLog(commands.Cog):
         if guild is None:
             return
         now = datetime.now(timezone.utc)
-        for vc in guild.voice_channels:
-            for member in vc.members:
-                if not member.bot:
-                    await self.db.touch_active(guild.id, member.id, now)
+        try:
+            for vc in guild.voice_channels:
+                for member in vc.members:
+                    if not member.bot:
+                        await self.db.touch_active(guild.id, member.id, now)
+        except Exception:
+            # DB 일시 장애 등으로 루프가 죽지 않게 (다음 주기에 재시도)
+            log.warning("하트비트 갱신 실패(다음 주기에 재시도)", exc_info=True)
 
     @heartbeat_loop.before_loop
     async def _before_heartbeat(self) -> None:

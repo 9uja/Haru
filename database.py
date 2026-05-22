@@ -77,8 +77,8 @@ class Database:
             self._pool = None
 
     # ------------------------------------------------------------ 재시도 래퍼
-    async def _run(self, fn, *, retries: int = 2):
-        """fn(connection) 을 실행하되 일시적 연결 오류 시 지수 백오프로 재시도."""
+    async def _run(self, fn, *, retries: int = 3):
+        """fn(connection) 을 실행하되 일시적 연결 오류 시 지수 백오프(최대 8초)로 재시도."""
         delay = 1.0
         last_exc: Optional[BaseException] = None
         for attempt in range(retries + 1):
@@ -90,21 +90,21 @@ class Database:
                 if attempt < retries:
                     log.warning("DB 일시 오류, 재시도 %d/%d: %s", attempt + 1, retries, exc)
                     await asyncio.sleep(delay)
-                    delay *= 2
+                    delay = min(delay * 2, 8.0)
         assert last_exc is not None
         raise last_exc
 
-    async def _execute(self, query: str, *args) -> None:
-        await self._run(lambda con: con.execute(query, *args))
+    async def _execute(self, query: str, *args, retries: int = 3) -> None:
+        await self._run(lambda con: con.execute(query, *args), retries=retries)
 
-    async def _fetch(self, query: str, *args) -> list[asyncpg.Record]:
-        return await self._run(lambda con: con.fetch(query, *args))
+    async def _fetch(self, query: str, *args, retries: int = 3) -> list[asyncpg.Record]:
+        return await self._run(lambda con: con.fetch(query, *args), retries=retries)
 
-    async def _fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
-        return await self._run(lambda con: con.fetchrow(query, *args))
+    async def _fetchrow(self, query: str, *args, retries: int = 3) -> Optional[asyncpg.Record]:
+        return await self._run(lambda con: con.fetchrow(query, *args), retries=retries)
 
-    async def _fetchval(self, query: str, *args):
-        return await self._run(lambda con: con.fetchval(query, *args))
+    async def _fetchval(self, query: str, *args, retries: int = 3):
+        return await self._run(lambda con: con.fetchval(query, *args), retries=retries)
 
     # ------------------------------------------------------------ 길드 설정
     async def set_log_channel(self, guild_id: int, channel_id: int) -> None:
@@ -180,7 +180,10 @@ class Database:
 
     # ------------------------------------------------------------ 서버(길드) 입·퇴장
     async def record_member_join(self, guild_id: int, user_id: int, when: datetime) -> int:
-        """서버 입장: join_count +1 + last_joined_at 갱신. 누적 입장 횟수를 반환."""
+        """서버 입장: join_count +1 + last_joined_at 갱신. 누적 입장 횟수를 반환.
+
+        1회성 이벤트라 누락 시 영구 손실 → 재시도를 더 길게(5회).
+        """
         return await self._fetchval(
             """
             INSERT INTO member_log (guild_id, user_id, join_count, last_joined_at)
@@ -193,10 +196,14 @@ class Database:
             guild_id,
             user_id,
             when,
+            retries=5,
         )
 
     async def record_member_leave(self, guild_id: int, user_id: int, when: datetime) -> int:
-        """서버 퇴장: leave_count +1 + last_left_at 갱신. 누적 퇴장 횟수를 반환."""
+        """서버 퇴장: leave_count +1 + last_left_at 갱신. 누적 퇴장 횟수를 반환.
+
+        1회성 이벤트라 누락 시 영구 손실 → 재시도를 더 길게(5회).
+        """
         return await self._fetchval(
             """
             INSERT INTO member_log (guild_id, user_id, leave_count, last_left_at)
@@ -209,6 +216,7 @@ class Database:
             guild_id,
             user_id,
             when,
+            retries=5,
         )
 
     async def get_member_log(self, guild_id: int, user_id: int) -> Optional[asyncpg.Record]:
