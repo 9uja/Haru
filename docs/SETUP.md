@@ -4,9 +4,9 @@
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) 접속 → **New Application**
 2. 좌측 **Bot** 탭 → **Reset Token** 으로 토큰 발급 (이 토큰은 한 번만 표시됨, 외부 노출 금지)
-3. 같은 화면 **Privileged Gateway Intents** 에서 아래를 켭니다:
-   - **SERVER MEMBERS INTENT** — 역할/멤버 관리(`/role`)에 필요
-   - (MESSAGE CONTENT INTENT 는 슬래시 커맨드만 쓰므로 불필요)
+3. 같은 화면 **Privileged Gateway Intents** 에서 아래 **둘 다** 켭니다:
+   - **SERVER MEMBERS INTENT** — 멤버 입·퇴장/비활성 조회에 필요
+   - **MESSAGE CONTENT INTENT** — "하루야 …" AI 대화(메시지 본문 읽기)에 필요
 
 ## 2. 봇 초대
 
@@ -54,9 +54,10 @@ GEMINI_API_KEY=       # (선택) AI 대화 기능용
 ```
 
 ### (선택) AI 대화 기능 — Google Gemini
-`/ai`(한국어 `/대화`) 명령을 쓰려면 무료 Gemini 키가 필요합니다(없으면 봇은 정상 동작, 이 명령만 비활성).
-1. [Google AI Studio](https://aistudio.google.com/apikey) 접속(신용카드 불필요) → **Create API key**
-2. 발급된 키를 `.env` 의 `GEMINI_API_KEY` 에 입력
+채팅창에 **`하루야 <메시지>`** 로 말하면 AI가 답합니다(예: `하루야 오늘 기분 어때?`). 쓰려면:
+1. **MESSAGE CONTENT INTENT** 활성화(위 1번 참고) — 메시지 본문을 읽어야 하므로 필수
+2. [Google AI Studio](https://aistudio.google.com/apikey) 접속(신용카드 불필요) → **Create API key**
+3. 발급된 키를 `.env` 의 `GEMINI_API_KEY` 에 입력 (없으면 봇은 정상 동작하되 AI만 안내 메시지 출력)
 - 무료 한도: `gemini-2.5-flash-lite` 기준 분당 15회 / 하루 1,000회 정도 → 소규모 서버에 충분
 - 주의: 무료 티어 입력은 모델 개선에 사용될 수 있으니 민감정보는 보내지 마세요.
 

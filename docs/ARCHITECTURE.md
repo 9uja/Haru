@@ -52,9 +52,10 @@
 
 ## 권한 & 인텐트
 
-- **인텐트**: `Intents.default()` + `members=True`.
-  `members` 는 privileged intent → Developer Portal 에서 별도 활성화 필요
-  (서버 입·퇴장 추적, `/inactive`·`/activity` 멤버 열거에 필수).
+- **인텐트**: `Intents.default()` + `members=True` + `message_content=True`.
+  둘 다 privileged intent → Developer Portal 에서 별도 활성화 필요.
+  - `members`: 서버 입·퇴장 추적, `/inactive`·`/activity` 멤버 열거
+  - `message_content`: "하루야 …" 메시지 본문을 읽어 AI 대화 처리
 - **명령 권한**: `default_permissions` 로 `/setup-log`(채널 관리), `/inactive`·`/activity`(서버 관리)
   를 제한. 서버 관리자가 디스코드 UI 에서 명령별 권한을 추가 조정할 수 있다.
 
@@ -62,6 +63,14 @@
 
 - 모든 명령은 코루틴. 외부/지연 작업 전 `interaction.response.defer()` 로 3초 응답 제한 회피.
 - 코그 단위 에러 핸들러(`cog_app_command_error`)로 사용자 친화적 메시지 반환.
+
+## AI 대화 (하루야 트리거)
+
+- 슬래시가 아닌 **`on_message` 리스너**로, 메시지가 `하루야` 로 시작하면 뒷부분을 프롬프트로 사용.
+  → 메시지 본문 접근이 필요해 `message_content` 인텐트 필수(@멘션 방식이면 인텐트 없이도 되지만 요구사항은 단어 트리거).
+- Google **Gemini**(`gemini-2.5-flash-lite`) 무료 API를 기존 `aiohttp` 로 REST 호출(새 의존성 0).
+- `GEMINI_API_KEY` 는 선택값 — 없으면 봇은 정상 동작하고 트리거 시 안내만 출력.
+- 답변은 일반 텍스트로 `reply`(2000자 초과 시 분할), 멘션 무음.
 
 ## 데이터 영속 (PostgreSQL / asyncpg)
 

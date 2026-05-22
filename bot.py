@@ -25,7 +25,8 @@ class HaruBot(commands.Bot):
         self._health_runner = None
 
         intents = discord.Intents.default()
-        intents.members = True  # 역할/멤버 관리·비활성 조회에 필요한 권한 있는 인텐트
+        intents.members = True  # 멤버 입퇴장·비활성 조회에 필요한 권한 있는 인텐트
+        intents.message_content = True  # "하루야 ..." 메시지 본문 읽기(AI 대화)용 권한 인텐트
         # voice_states 는 Intents.default() 에 포함되어 음성 이벤트 수신 가능
 
         super().__init__(
