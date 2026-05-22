@@ -230,7 +230,7 @@ class VoiceLog(commands.Cog):
             return
 
         days = days if days and days > 0 else self.settings.inactive_days
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()  # 모두가 볼 수 있도록 공개 응답
 
         rows = await self._collect_inactive(guild, days)
         view = MemberListView(
@@ -239,9 +239,7 @@ class VoiceLog(commands.Cog):
             rows=rows,
             color=discord.Color.orange(),
         )
-        view.message = await interaction.followup.send(
-            embed=view.build_embed(), view=view, ephemeral=True
-        )
+        view.message = await interaction.followup.send(embed=view.build_embed(), view=view)
 
     async def _activity(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
@@ -249,16 +247,14 @@ class VoiceLog(commands.Cog):
             await interaction.response.send_message("서버에서만 사용할 수 있습니다.", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()  # 모두가 볼 수 있도록 공개 응답
         rows = await self._collect_all(guild)
         view = MemberListView(
             author_id=interaction.user.id,
             title="📊 전체 멤버 음성 활동 현황",
             rows=rows,
         )
-        view.message = await interaction.followup.send(
-            embed=view.build_embed(), view=view, ephemeral=True
-        )
+        view.message = await interaction.followup.send(embed=view.build_embed(), view=view)
 
     async def _stats(
         self, interaction: discord.Interaction, member: Optional[discord.Member]
