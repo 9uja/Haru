@@ -14,6 +14,7 @@ INITIAL_COGS = (
     "cogs.general",
     "cogs.voice_log",
     "cogs.ai_chat",
+    "cogs.fun",
 )
 
 

@@ -19,6 +19,7 @@ class Settings:
     report_interval_hours: int
     gemini_api_key: str | None = None
     ai_cooldown_seconds: int = 10
+    react_chance: float = 0.05
 
 
 def _require(name: str) -> str:
@@ -39,6 +40,16 @@ def _int_env(name: str, default: int) -> int:
     return int(raw)
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise RuntimeError(f"환경 변수 '{name}' 는 숫자여야 합니다 (현재: {raw!r}).")
+
+
 def load_settings() -> Settings:
     guild_raw = _require("GUILD_ID")
     if not guild_raw.isdigit():
@@ -53,4 +64,5 @@ def load_settings() -> Settings:
         report_interval_hours=_int_env("REPORT_INTERVAL_HOURS", 168),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         ai_cooldown_seconds=_int_env("AI_COOLDOWN_SECONDS", 10),
+        react_chance=_float_env("REACT_CHANCE", 0.05),
     )

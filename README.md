@@ -61,8 +61,9 @@ HaruBot/
 │   └── harubot.service # systemd 유닛 (VM 24시간 구동·자동 재시작)
 ├── cogs/               # 기능 모듈
 │   ├── general.py      # /ping (핑)
-│   ├── voice_log.py    # 음성/멤버 추적, /setup-log·/inactive·/activity·/stats, 자동 보고
-│   └── ai_chat.py      # "하루야 …" 메시지 → Gemini 무료 API 대화
+│   ├── voice_log.py    # 음성/멤버 추적, /setup-log·/inactive·/activity·/stats·/휴면, 자동 보고
+│   ├── ai_chat.py      # "하루야 …" 메시지 → Gemini 무료 API 대화/번역
+│   └── fun.py          # 메시지에 랜덤 이모지 반응 (기본 5%, REACT_CHANCE)
 └── docs/
     ├── SETUP.md        # 토큰 발급·DB·실행·초대 가이드
     ├── DEPLOY.md       # Oracle Cloud 무료 VM + Neon 24시간 배포 가이드
