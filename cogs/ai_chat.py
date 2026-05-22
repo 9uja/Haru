@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import aiohttp
 import discord
@@ -38,6 +39,8 @@ class AIChat(commands.Cog):
         self.bot = bot
         self.api_key = bot.settings.gemini_api_key
         self.guild_id = bot.settings.guild_id
+        self.cooldown = bot.settings.ai_cooldown_seconds
+        self._last_call: dict[int, float] = {}  # user_id -> 마지막 호출 시각(monotonic)
         self.session = aiohttp.ClientSession()
 
     async def cog_unload(self) -> None:
@@ -114,6 +117,16 @@ class AIChat(commands.Cog):
             )
             return
 
+        # 사용자별 쿨다운: 도배 방지·무료 한도 보호. 중복 안내 대신 ⏳ 반응만.
+        now = time.monotonic()
+        if now - self._last_call.get(message.author.id, 0.0) < self.cooldown:
+            try:
+                await message.add_reaction("⏳")
+            except discord.HTTPException:
+                pass
+            return
+        self._last_call[message.author.id] = now
+
         user_prompt, system = self._build_request(prompt)
         try:
             async with message.channel.typing():
@@ -121,7 +134,7 @@ class AIChat(commands.Cog):
         except Exception:  # noqa: BLE001 - 상세는 로그로만, 사용자에겐 통일 문구
             log.warning("AI 호출 실패", exc_info=True)
             await message.reply(
-                "지금은 응답할 수 없습니다.", mention_author=False, allowed_mentions=SILENT
+                "지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT
             )
             return
 

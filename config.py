@@ -18,6 +18,7 @@ class Settings:
     inactive_days: int
     report_interval_hours: int
     gemini_api_key: str | None = None
+    ai_cooldown_seconds: int = 10
 
 
 def _require(name: str) -> str:
@@ -51,4 +52,5 @@ def load_settings() -> Settings:
         inactive_days=_int_env("INACTIVE_DAYS", 30),
         report_interval_hours=_int_env("REPORT_INTERVAL_HOURS", 168),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
+        ai_cooldown_seconds=_int_env("AI_COOLDOWN_SECONDS", 10),
     )
