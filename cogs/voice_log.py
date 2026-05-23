@@ -186,10 +186,11 @@ class VoiceLog(commands.Cog):
         if guild is None:
             await interaction.response.send_message("서버에서만 사용할 수 있습니다.", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)  # DB/생성 전 응답 시간 확보
 
         existing = await self.db.get_log_channel(guild.id)
         if existing and guild.get_channel(existing):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"이미 로그 채널이 설정되어 있습니다: <#{existing}>", ephemeral=True
             )
             return
@@ -205,7 +206,7 @@ class VoiceLog(commands.Cog):
                 name=name, overwrites=overwrites, reason=f"{interaction.user} 가 로그 채널 설정"
             )
         except discord.Forbidden:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "채널을 만들 권한이 없습니다. 봇에 '채널 관리' 권한을 부여하세요.", ephemeral=True
             )
             return
@@ -213,7 +214,7 @@ class VoiceLog(commands.Cog):
         await self.db.set_log_channel(guild.id, channel.id)
         self.log_channel_id = channel.id
         await channel.send("이 채널은 HaruBot 전용 로그 채널로 설정되었습니다. (음성 활동/비활성 보고가 기록됩니다)")
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"로그 채널 {channel.mention} 을(를) 생성했습니다. 관리자만 볼 수 있습니다.", ephemeral=True
         )
 
@@ -259,6 +260,7 @@ class VoiceLog(commands.Cog):
             return
 
         target = member or interaction.user
+        await interaction.response.defer()  # DB 조회 전 응답 시간 확보(콜드 스타트 대비)
         voice = await self.db.get_voice_stats(guild.id, target.id)
         mlog = await self.db.get_member_log(guild.id, target.id)
 
@@ -286,7 +288,7 @@ class VoiceLog(commands.Cog):
                 for w in warns
             ]
             embed.add_field(name="최근 경고", value="\n".join(lines)[:1024], inline=False)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ------------------------------------------------------------------ 명령어 (영어/한국어)
     @app_commands.command(name="로그채널설정", description="봇 전용 로그 채널을 생성합니다.")
@@ -412,10 +414,14 @@ class VoiceLog(commands.Cog):
             msg = "봇 권한이 부족합니다(역할 위계·권한 확인)."
         else:
             msg = f"오류가 발생했습니다: {error}"
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.HTTPException:
+            # 상호작용이 이미 만료/응답된 경우 등은 무시(2차 예외 방지)
+            log.warning("에러 안내 전송 실패", exc_info=True)
 
     # ------------------------------------------------------------------ loops
     @tasks.loop(hours=168)

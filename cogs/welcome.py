@@ -66,8 +66,9 @@ class Welcome(commands.Cog):
         if not isinstance(target, discord.TextChannel):
             await interaction.response.send_message("텍스트 채널을 지정하세요.", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)  # DB 쓰기 전 응답 시간 확보
         await self.db.set_welcome_channel(guild.id, target.id)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"환영 채널을 {target.mention} 로 설정했습니다.", ephemeral=True
         )
 
