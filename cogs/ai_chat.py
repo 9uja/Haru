@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 import aiohttp
@@ -32,6 +33,25 @@ LANG_MAP = {
 }
 MSG_LIMIT = 2000
 SILENT = discord.AllowedMentions.none()
+PAUSE_DEFAULT = 30.0  # 429(한도 초과) 시 기본 일시정지(초)
+
+
+class QuotaError(RuntimeError):
+    """Gemini 무료 한도 초과(429). retry_after 초 동안 추가 호출을 멈춘다."""
+
+    def __init__(self, message: str, retry_after: float) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _parse_retry(message: str) -> float:
+    m = re.search(r"retry in ([\d.]+)s", message)
+    if m:
+        try:
+            return min(float(m.group(1)) + 1.0, 120.0)
+        except ValueError:
+            pass
+    return PAUSE_DEFAULT
 
 
 class AIChat(commands.Cog):
@@ -41,6 +61,7 @@ class AIChat(commands.Cog):
         self.guild_id = bot.settings.guild_id
         self.cooldown = bot.settings.ai_cooldown_seconds
         self._last_call: dict[int, float] = {}  # user_id -> 마지막 호출 시각(monotonic)
+        self._paused_until = 0.0  # 한도 초과 시 이 시각까지 API 호출 안 함(monotonic)
         self.session = aiohttp.ClientSession()
 
     async def cog_unload(self) -> None:
@@ -60,7 +81,10 @@ class AIChat(commands.Cog):
         ) as resp:
             data = await resp.json()
             if resp.status != 200:
-                raise RuntimeError(data.get("error", {}).get("message", f"HTTP {resp.status}"))
+                msg = data.get("error", {}).get("message", f"HTTP {resp.status}")
+                if resp.status == 429:
+                    raise QuotaError(msg, _parse_retry(msg))
+                raise RuntimeError(msg)
 
         candidates = data.get("candidates") or []
         if not candidates:
@@ -136,10 +160,22 @@ class AIChat(commands.Cog):
             return
         self._last_call[message.author.id] = now
 
+        # 한도 초과로 일시정지 중이면 API 호출 없이 바로 안내(반복 429·로그 폭주 방지)
+        if now < self._paused_until:
+            await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
+            return
+
         user_prompt, system = self._build_request(prompt)
         try:
             async with message.channel.typing():
                 answer = await self._ask(user_prompt, system)
+        except QuotaError as exc:
+            self._paused_until = time.monotonic() + exc.retry_after
+            log.warning("AI 무료 한도 초과 — 약 %.0f초 일시중지", exc.retry_after)  # traceback 생략
+            await message.reply(
+                "지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT
+            )
+            return
         except Exception:  # noqa: BLE001 - 상세는 로그로만, 사용자에겐 통일 문구
             log.warning("AI 호출 실패", exc_info=True)
             await message.reply(
