@@ -50,7 +50,7 @@ Wispbyte의 Python egg 는 `requirements.txt` 를 **자동 설치**한 뒤 `pyth
 - **Startup** 탭에서 **Python 파일(`PY_FILE`)** 값을 **`bot.py`** 로 지정.
   - ⚠️ `start.sh` 로 지정하면 egg 가 `python start.sh` 로 실행해 **SyntaxError** 가 납니다.
     이 패널에서는 `start.sh` 가 필요 없습니다(셸 명령형 startup 을 쓰는 다른 패널 전용).
-- **Start** → 콘솔에 `DB 연결 완료`, `슬래시 커맨드 8개 동기화`, `로그인: ...` 이 보이면 성공.
+- **Start** → 콘솔에 `DB 연결 완료`, `슬래시 커맨드 9개 동기화`, `로그인: ...` 이 보이면 성공.
 
 ### A-5. 업데이트
 파일을 다시 올리거나 Git pull 후, 패널에서 **Restart**.

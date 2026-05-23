@@ -42,12 +42,6 @@ class Moderation(commands.Cog):
             allowed_mentions=MENTION_USER,
         )
 
-    @app_commands.command(name="warn", description="유저에게 경고를 추가합니다. (목록은 /stats 로 확인)")
-    @app_commands.default_permissions(manage_messages=True)
-    @app_commands.describe(member="대상 유저", reason="경고 내용")
-    async def warn(self, interaction: discord.Interaction, member: discord.Member, reason: str) -> None:
-        await self._warn(interaction, member, reason)
-
     @app_commands.command(name="유저경고", description="유저에게 경고를 추가합니다. (목록은 /스탯 으로 확인)")
     @app_commands.default_permissions(manage_messages=True)
     @app_commands.describe(member="대상 유저", reason="경고 내용")

@@ -75,7 +75,7 @@ GEMINI_API_KEY=       # (선택) AI 대화 기능용
 ```
 DB 연결 완료
 코그 로드됨: cogs.general
-슬래시 커맨드 10개 동기화 (guild=...)
+슬래시 커맨드 9개 동기화 (guild=...)
 로그인: HaruBot#1234 (id=...)
 ```
 
@@ -83,9 +83,9 @@ DB 연결 완료
 
 ## 7. 첫 사용
 
-1. 서버에서 `/setup-log` 실행 → 봇 전용(비공개) 로그 채널이 생성됩니다.
+1. 서버에서 `/로그채널설정` 실행 → 봇 전용(비공개) 로그 채널이 생성됩니다.
 2. 이후 음성 채널 입장/퇴장이 그 채널에 기록되고, 활동 시각이 DB에 저장됩니다.
-3. `/inactive` 로 비활성 멤버를 즉시 조회하거나, 설정 주기로 자동 보고를 받습니다.
+3. `/활동확인` 으로 비활성 멤버를 즉시 조회하거나, 설정 주기로 자동 보고를 받습니다.
 
 ## 문제 해결
 
@@ -93,7 +93,7 @@ DB 연결 완료
 | --- | --- |
 | `환경 변수 'DISCORD_TOKEN' 가 설정되지 않았습니다` | `.env` 누락 또는 값 비어 있음 |
 | 슬래시 커맨드가 안 보임 | `GUILD_ID` 가 실제 서버와 다름 / 봇이 그 서버에 없음 |
-| `/setup-log` 실패 | 봇에 Manage Channels 권한 없음 |
+| `/로그채널설정` 실패 | 봇에 Manage Channels 권한 없음 |
 | `members` 관련 오류 | Developer Portal 에서 SERVER MEMBERS INTENT 미활성화 |
 | DB 연결 실패(SSL 등) | `DATABASE_URL` 끝에 `?sslmode=require` 포함 여부 확인, 자격증명/호스트 재확인 |
 | 가끔 DB 타임아웃(`on_voice_state_update` 등) | Neon 무료 티어 일시정지 후 콜드 스타트 — 봇이 자동 재시도하므로 대부분 복구됨. 잦으면 `DATABASE_URL` 을 Neon **pooler** 엔드포인트(`-pooler`)로 사용 |

@@ -39,12 +39,6 @@ def _fmt_duration(seconds: int) -> str:
 
 
 class VoiceLog(commands.Cog):
-    dormant = app_commands.Group(
-        name="dormant",
-        description="비활성(휴면) 멤버 관리",
-        default_permissions=discord.Permissions(manage_roles=True),
-        guild_only=True,
-    )
     dormant_ko = app_commands.Group(
         name="휴면",
         description="비활성(휴면) 멤버 관리",
@@ -295,23 +289,11 @@ class VoiceLog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ------------------------------------------------------------------ 명령어 (영어/한국어)
-    @app_commands.command(name="setup-log", description="봇 전용 로그 채널을 생성합니다.")
-    @app_commands.default_permissions(manage_channels=True)
-    @app_commands.describe(name="생성할 채널 이름 (기본: harubot-log)")
-    async def setup_log(self, interaction: discord.Interaction, name: str = "harubot-log") -> None:
-        await self._setup_log(interaction, name)
-
     @app_commands.command(name="로그채널설정", description="봇 전용 로그 채널을 생성합니다.")
     @app_commands.default_permissions(manage_channels=True)
     @app_commands.describe(name="생성할 채널 이름 (기본: harubot-log)")
     async def setup_log_ko(self, interaction: discord.Interaction, name: str = "harubot-log") -> None:
         await self._setup_log(interaction, name)
-
-    @app_commands.command(name="inactive", description="일정 기간 이상 음성 활동이 없는 멤버를 조회합니다.")
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.describe(days="기준 일수 (미지정 시 기본 설정값)")
-    async def inactive(self, interaction: discord.Interaction, days: Optional[int] = None) -> None:
-        await self._inactive(interaction, days)
 
     @app_commands.command(name="활동확인", description="일정 기간 이상 음성 활동이 없는 멤버를 조회합니다.")
     @app_commands.default_permissions(manage_guild=True)
@@ -319,20 +301,10 @@ class VoiceLog(commands.Cog):
     async def inactive_ko(self, interaction: discord.Interaction, days: Optional[int] = None) -> None:
         await self._inactive(interaction, days)
 
-    @app_commands.command(name="activity", description="전체 멤버의 음성 활동 현황을 확인합니다.")
-    @app_commands.default_permissions(manage_guild=True)
-    async def activity(self, interaction: discord.Interaction) -> None:
-        await self._activity(interaction)
-
     @app_commands.command(name="전체확인", description="전체 멤버의 음성 활동 현황을 확인합니다.")
     @app_commands.default_permissions(manage_guild=True)
     async def activity_ko(self, interaction: discord.Interaction) -> None:
         await self._activity(interaction)
-
-    @app_commands.command(name="stats", description="멤버의 음성 활동 통계(입장/퇴장 횟수 등)를 봅니다.")
-    @app_commands.describe(member="대상 멤버 (생략 시 본인)")
-    async def stats(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
-        await self._stats(interaction, member)
 
     @app_commands.command(name="스탯", description="멤버의 음성 활동 통계(입장/퇴장 횟수 등)를 봅니다.")
     @app_commands.describe(member="대상 멤버 (생략 시 본인)")
@@ -419,17 +391,6 @@ class VoiceLog(commands.Cog):
             except discord.HTTPException:
                 pass
         await interaction.followup.send(f"휴면 역할 해제 {cleared}명", ephemeral=True)
-
-    @dormant.command(name="set", description="비활성 멤버에게 '휴면' 역할을 부여합니다.")
-    @app_commands.describe(days="기준 일수(미지정 시 기본값)", dm="DM 경고도 보낼지 여부")
-    async def dormant_set(
-        self, interaction: discord.Interaction, days: Optional[int] = None, dm: bool = False
-    ) -> None:
-        await self._dormant_set(interaction, days, dm)
-
-    @dormant.command(name="clear", description="모든 멤버의 '휴면' 역할을 해제합니다.")
-    async def dormant_clear(self, interaction: discord.Interaction) -> None:
-        await self._dormant_clear(interaction)
 
     @dormant_ko.command(name="표시", description="비활성 멤버에게 '휴면' 역할을 부여합니다.")
     @app_commands.describe(days="기준 일수(미지정 시 기본값)", dm="DM 경고도 보낼지 여부")

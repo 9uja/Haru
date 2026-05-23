@@ -71,14 +71,6 @@ class Welcome(commands.Cog):
             f"환영 채널을 {target.mention} 로 설정했습니다.", ephemeral=True
         )
 
-    @app_commands.command(name="welcome-channel", description="신규 입장 환영 메시지를 보낼 채널을 설정합니다.")
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.describe(channel="환영 채널 (생략 시 현재 채널)")
-    async def welcome_channel(
-        self, interaction: discord.Interaction, channel: Optional[discord.TextChannel] = None
-    ) -> None:
-        await self._set_welcome(interaction, channel)
-
     @app_commands.command(name="환영채널설정", description="신규 입장 환영 메시지를 보낼 채널을 설정합니다.")
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(channel="환영 채널 (생략 시 현재 채널)")
@@ -111,10 +103,6 @@ class Welcome(commands.Cog):
         if not embed.fields:
             embed.description = "표시할 공개 채널이 없습니다."
         await interaction.response.send_message(embed=embed)
-
-    @app_commands.command(name="channels", description="서버 채널 안내를 보여줍니다.")
-    async def channels(self, interaction: discord.Interaction) -> None:
-        await self._channels(interaction)
 
     @app_commands.command(name="채널안내", description="서버 채널 안내를 보여줍니다.")
     async def channels_ko(self, interaction: discord.Interaction) -> None:
