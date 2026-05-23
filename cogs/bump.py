@@ -24,6 +24,7 @@ SILENT = discord.AllowedMentions.none()
 SUCCESS_MARKERS = (
     "👍", "thumbsup", "bump done", "bumped",
     "올렸", "끌어올", "올려", "범프 완료", "범프했",
+    "갱신 완료", "갱신완료",  # 한국어 DISBOARD: "서버 갱신 완료!"
 )
 
 
