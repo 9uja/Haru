@@ -22,6 +22,7 @@ class Settings:
     react_chance: float = 0.05
     groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"
+    random_reply_chance: float = 0.02
 
 
 def _require(name: str) -> str:
@@ -69,4 +70,5 @@ def load_settings() -> Settings:
         react_chance=_float_env("REACT_CHANCE", 0.05),
         groq_api_key=os.getenv("GROQ_API_KEY") or None,
         groq_model=os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile",
+        random_reply_chance=_float_env("REPLY_CHANCE", 0.02),
     )

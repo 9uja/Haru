@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 import time
 
@@ -43,6 +44,13 @@ PAUSE_DEFAULT = 30.0  # 429(한도 초과) 시 기본 일시정지(초)
 # 생성 파라미터: 대화는 약간 창의적으로, 번역은 저온도·짧게(반복 폭주 방지)
 GEN_CHAT = {"temperature": 0.7, "max_tokens": 800}
 GEN_TRANSLATE = {"temperature": 0.2, "max_tokens": 400}
+GEN_RANDOM = {"temperature": 0.8, "max_tokens": 200}
+
+RANDOM_SYSTEM = (
+    "당신은 '하루'라는 디스코드 친구입니다. 다른 사람들의 대화에 가볍고 자연스럽게 "
+    "한두 문장으로 짧게 끼어들어 답하세요. 너무 길거나 진지하지 않게."
+)
+RANDOM_REPLY_COOLDOWN = 60.0  # 임의 답장 전역 쿨다운(초): 무료 쿼터 보호
 
 
 class QuotaError(RuntimeError):
@@ -71,9 +79,11 @@ class AIChat(commands.Cog):
         self.groq_model = bot.settings.groq_model
         self.guild_id = bot.settings.guild_id
         self.cooldown = bot.settings.ai_cooldown_seconds
+        self.reply_chance = bot.settings.random_reply_chance
         self._last_call: dict[int, float] = {}  # user_id -> 마지막 호출 시각(monotonic)
         self._gemini_pause = 0.0  # 이 시각까지 Gemini 호출 안 함(monotonic)
         self._groq_pause = 0.0
+        self._last_random = 0.0  # 마지막 임의 답장 시각(monotonic)
         self.session = aiohttp.ClientSession()
 
     async def cog_unload(self) -> None:
@@ -203,11 +213,13 @@ class AIChat(commands.Cog):
             return
         if message.guild.id != self.guild_id:
             return
-
         content = message.content.strip()
-        if not content.startswith(TRIGGER):
-            return
+        if content.startswith(TRIGGER):
+            await self._handle_trigger(message, content)
+        else:
+            await self._maybe_random_reply(message, content)
 
+    async def _handle_trigger(self, message: discord.Message, content: str) -> None:
         prompt = content[len(TRIGGER):].strip(" \t\n,.!?·~:;")
         if not prompt:
             await message.reply(
@@ -245,6 +257,23 @@ class AIChat(commands.Cog):
             await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
             return
 
+        await self._reply_chunks(message, answer)
+
+    async def _maybe_random_reply(self, message: discord.Message, content: str) -> None:
+        """일정 확률로 임의 채팅에 가볍게 답장. 쿼터 보호: 전역 쿨다운·일시정지 존중, 실패는 무시."""
+        if self.reply_chance <= 0 or len(content) < 2:
+            return
+        if random.random() >= self.reply_chance:
+            return
+        now = time.monotonic()
+        if now - self._last_random < RANDOM_REPLY_COOLDOWN or not self._available():
+            return
+        self._last_random = now
+        try:
+            async with message.channel.typing():
+                answer = await self._ask(content, RANDOM_SYSTEM, GEN_RANDOM)
+        except Exception:  # noqa: BLE001 - 임의 답장 실패는 조용히 무시
+            return
         await self._reply_chunks(message, answer)
 
 
