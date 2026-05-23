@@ -106,7 +106,8 @@ class Database:
             except RETRY_ERRORS as exc:
                 last_exc = exc
                 if attempt < retries:
-                    log.warning("DB 일시 오류, 재시도 %d/%d: %s", attempt + 1, retries, exc)
+                    # 자동 복구되는 일시 오류는 소음 방지를 위해 DEBUG (최종 실패는 호출부에서 처리)
+                    log.debug("DB 일시 오류, 재시도 %d/%d: %r", attempt + 1, retries, exc)
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 8.0)
         assert last_exc is not None
@@ -289,23 +290,16 @@ class Database:
             channel_id,
         )
 
-    async def get_bump_channel(self, guild_id: int) -> Optional[int]:
-        return await self._fetchval(
-            "SELECT channel_id FROM bump_reminder WHERE guild_id = $1", guild_id
+    async def get_bump_state(self, guild_id: int) -> Optional[asyncpg.Record]:
+        """리마인더 채널·예약 시각(시작 시 메모리 캐시로 로드)."""
+        return await self._fetchrow(
+            "SELECT channel_id, remind_at FROM bump_reminder WHERE guild_id = $1", guild_id
         )
 
     async def schedule_bump_reminder(self, guild_id: int, remind_at: datetime) -> None:
         """채널이 지정된 경우에만 예약 시각 갱신(미지정이면 0행 → 무시)."""
         await self._execute(
             "UPDATE bump_reminder SET remind_at = $2 WHERE guild_id = $1", guild_id, remind_at
-        )
-
-    async def get_due_bump_reminder(self, guild_id: int) -> Optional[int]:
-        """예약 시각이 지난 리마인더가 있으면 채널 ID 반환(없으면 None)."""
-        return await self._fetchval(
-            "SELECT channel_id FROM bump_reminder"
-            " WHERE guild_id = $1 AND remind_at IS NOT NULL AND remind_at <= now()",
-            guild_id,
         )
 
     async def clear_bump_reminder(self, guild_id: int) -> None:

@@ -2,7 +2,8 @@
 
 봇은 다른 봇의 슬래시 명령(/bump)을 대신 실행할 수 없다(Discord API 제약).
 대신 DISBOARD 의 범프 성공을 감지해, 2시간 뒤 **지정된 채널**에 알림을 보낸다.
-알림 채널은 `/범프채널설정` 으로 지정. 예약 시각은 DB에 저장 → 봇 재시작에도 유지.
+알림 채널은 `/범프채널설정` 으로 지정. 예약 시각은 DB에 저장(재시작 유지) + 메모리 캐시
+(매분 DB 조회를 피해 Neon 무료 컴퓨트 절약).
 """
 from __future__ import annotations
 
@@ -28,8 +29,17 @@ class Bump(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.guild_id = bot.settings.guild_id
+        self._channel_id: Optional[int] = None       # 지정된 알림 채널(메모리 캐시)
+        self._remind_at: Optional[datetime] = None    # 다음 알림 예약 시각(메모리 캐시)
 
     async def cog_load(self) -> None:
+        try:
+            row = await self.db.get_bump_state(self.guild_id)
+            if row:
+                self._channel_id = row["channel_id"]
+                self._remind_at = row["remind_at"]
+        except Exception:
+            log.warning("범프 상태 로드 실패", exc_info=True)
         self.bump_loop.start()
 
     async def cog_unload(self) -> None:
@@ -59,6 +69,7 @@ class Bump(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         await self.db.set_bump_channel(guild.id, target.id)
+        self._channel_id = target.id
         await interaction.followup.send(
             f"범프 리마인더 채널을 {target.mention} 로 설정했습니다. "
             "DISBOARD 범프가 확인되면 2시간 뒤 이 채널로 알려드릴게요.",
@@ -71,38 +82,38 @@ class Bump(commands.Cog):
             return
         if message.author.id != DISBOARD_ID or not self._is_success(message):
             return
-        # 채널이 지정돼 있을 때만 예약(미지정이면 보낼 곳이 없으므로 무시)
-        if await self.db.get_bump_channel(self.guild_id) is None:
+        if self._channel_id is None:  # 채널 미설정 → 보낼 곳이 없으므로 무시
             return
-        when = datetime.now(timezone.utc) + BUMP_INTERVAL
+        self._remind_at = datetime.now(timezone.utc) + BUMP_INTERVAL
         try:
-            await self.db.schedule_bump_reminder(self.guild_id, when)
-            log.info("DISBOARD 범프 감지 → 2시간 뒤 리마인더 예약")
-            try:
-                await message.add_reaction("✅")  # 추적 중 표시(선택)
-            except discord.HTTPException:
-                pass
+            await self.db.schedule_bump_reminder(self.guild_id, self._remind_at)
         except Exception:
-            log.warning("범프 리마인더 예약 실패", exc_info=True)
+            log.warning("범프 예약 저장 실패", exc_info=True)
+        try:
+            await message.add_reaction("✅")  # 추적 중 표시(선택)
+        except discord.HTTPException:
+            pass
+        log.info("DISBOARD 범프 감지 → 2시간 뒤 리마인더 예약")
 
     @tasks.loop(minutes=1)
     async def bump_loop(self) -> None:
+        # 메모리 캐시만 확인(DB 미조회). 예약 시각 도래 시에만 발송.
+        if self._remind_at is None or self._channel_id is None:
+            return
+        if datetime.now(timezone.utc) < self._remind_at:
+            return
+        self._remind_at = None  # 먼저 비워 중복 발송 방지
         try:
             guild = self.bot.get_guild(self.guild_id)
-            if guild is None:
-                return
-            channel_id = await self.db.get_due_bump_reminder(self.guild_id)
-            if not channel_id:
-                return
-            await self.db.clear_bump_reminder(self.guild_id)  # 중복 발송 방지로 먼저 비움
-            channel = guild.get_channel(channel_id)
+            channel = guild.get_channel(self._channel_id) if guild else None
             if isinstance(channel, discord.TextChannel):
                 await channel.send(
                     "🔔 범프 시간이에요! `/bump` 를 입력해 서버를 올려주세요.",
                     allowed_mentions=SILENT,
                 )
+            await self.db.clear_bump_reminder(self.guild_id)
         except Exception:
-            log.warning("범프 리마인더 처리 실패(다음 주기 재시도)", exc_info=True)
+            log.warning("범프 리마인더 발송 실패", exc_info=True)
 
     @bump_loop.before_loop
     async def _before_loop(self) -> None:
