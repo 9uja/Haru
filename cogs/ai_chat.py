@@ -1,9 +1,12 @@
-"""AI 대화/번역 기능. "하루야"로 시작하는 메시지를 Google Gemini(무료)로 처리한다.
+"""AI 대화/번역 기능. "하루야"로 시작하는 메시지를 LLM(무료)으로 처리한다.
 
 - `하루야 <질문>`            → 일반 대화
 - `하루야 번역 <문장>`        → 한국어↔영어 자동 번역
-- `하루야 번역 일본어 <문장>` → 지정 언어로 번역
-메시지 본문을 읽으므로 MESSAGE CONTENT INTENT(특권) 필요. GEMINI_API_KEY 없으면 안내만 함.
+- `하루야 번역 일본어 <문장>` → 지정 언어로 번역(+한글 발음)
+
+백엔드: **Gemini 우선, 한도 초과(429) 시 Groq 로 자동 폴백**(둘 다 무료, OpenAI 호환).
+대화 방식(트리거·번역·페르소나·발음·쿨다운·일시정지)은 백엔드와 무관하게 동일.
+메시지 본문을 읽으므로 MESSAGE CONTENT INTENT(특권) 필요. 키가 하나도 없으면 안내만 함.
 """
 from __future__ import annotations
 
@@ -17,8 +20,10 @@ from discord.ext import commands
 
 log = logging.getLogger(__name__)
 
-MODEL = "gemini-2.5-flash-lite"
-API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
 SYSTEM_HINT = "당신은 '하루'라는 이름의 디스코드 도우미입니다. 한국어로 친근하고 간결하게 답하세요."
 TRANSLATE_SYSTEM = "당신은 전문 번역기입니다. 요청한 언어로 자연스럽게 번역하고 번역 결과만 출력하세요(설명·따옴표 없이)."
 
@@ -37,7 +42,7 @@ PAUSE_DEFAULT = 30.0  # 429(한도 초과) 시 기본 일시정지(초)
 
 
 class QuotaError(RuntimeError):
-    """Gemini 무료 한도 초과(429). retry_after 초 동안 추가 호출을 멈춘다."""
+    """무료 한도 초과(429). retry_after 초 동안 해당 백엔드 호출을 멈춘다."""
 
     def __init__(self, message: str, retry_after: float) -> None:
         super().__init__(message)
@@ -45,7 +50,7 @@ class QuotaError(RuntimeError):
 
 
 def _parse_retry(message: str) -> float:
-    m = re.search(r"retry in ([\d.]+)s", message)
+    m = re.search(r"retry in ([\d.]+)s", message) or re.search(r"in ([\d.]+)s", message)
     if m:
         try:
             return min(float(m.group(1)) + 1.0, 120.0)
@@ -57,42 +62,104 @@ def _parse_retry(message: str) -> float:
 class AIChat(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.api_key = bot.settings.gemini_api_key
+        self.gemini_key = bot.settings.gemini_api_key
+        self.groq_key = bot.settings.groq_api_key
+        self.groq_model = bot.settings.groq_model
         self.guild_id = bot.settings.guild_id
         self.cooldown = bot.settings.ai_cooldown_seconds
         self._last_call: dict[int, float] = {}  # user_id -> 마지막 호출 시각(monotonic)
-        self._paused_until = 0.0  # 한도 초과 시 이 시각까지 API 호출 안 함(monotonic)
+        self._gemini_pause = 0.0  # 이 시각까지 Gemini 호출 안 함(monotonic)
+        self._groq_pause = 0.0
         self.session = aiohttp.ClientSession()
 
     async def cog_unload(self) -> None:
         await self.session.close()
 
-    async def _ask(self, prompt: str, system: str = SYSTEM_HINT) -> str:
+    # ------------------------------------------------------------ 백엔드 호출
+    async def _call_gemini(self, prompt: str, system: str) -> str:
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
         }
         async with self.session.post(
-            API_URL,
-            params={"key": self.api_key},
-            json=payload,
+            GEMINI_URL, params={"key": self.gemini_key}, json=payload,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as resp:
             data = await resp.json()
             if resp.status != 200:
-                msg = data.get("error", {}).get("message", f"HTTP {resp.status}")
+                msg = (data.get("error") or {}).get("message", f"HTTP {resp.status}")
                 if resp.status == 429:
                     raise QuotaError(msg, _parse_retry(msg))
                 raise RuntimeError(msg)
-
         candidates = data.get("candidates") or []
         if not candidates:
             raise RuntimeError("응답을 생성하지 못했습니다(안전 필터 또는 빈 응답).")
         parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(p.get("text", "") for p in parts).strip()
-        return text or "(빈 응답)"
+        return "".join(p.get("text", "") for p in parts).strip() or "(빈 응답)"
 
+    async def _call_groq(self, prompt: str, system: str) -> str:
+        payload = {
+            "model": self.groq_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 800,
+            "temperature": 0.7,
+        }
+        headers = {"Authorization": f"Bearer {self.groq_key}"}
+        async with self.session.post(
+            GROQ_URL, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=30)
+        ) as resp:
+            data = await resp.json()
+            if resp.status != 200:
+                msg = (data.get("error") or {}).get("message", f"HTTP {resp.status}")
+                if resp.status == 429:
+                    ra = resp.headers.get("retry-after")
+                    retry = float(ra) + 1.0 if (ra and ra.replace(".", "", 1).isdigit()) else _parse_retry(msg)
+                    raise QuotaError(msg, min(retry, 120.0))
+                raise RuntimeError(msg)
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("Groq 빈 응답")
+        return (choices[0].get("message", {}).get("content") or "").strip() or "(빈 응답)"
+
+    def _available(self) -> bool:
+        """지금 호출 가능한 백엔드가 하나라도 있는지(일시정지·키 고려)."""
+        now = time.monotonic()
+        if self.gemini_key and now >= self._gemini_pause:
+            return True
+        if self.groq_key and now >= self._groq_pause:
+            return True
+        return False
+
+    async def _ask(self, prompt: str, system: str = SYSTEM_HINT) -> str:
+        """Gemini 우선, 429/실패 시 Groq 폴백. 모두 불가하면 예외."""
+        if self.gemini_key and time.monotonic() >= self._gemini_pause:
+            try:
+                return await self._call_gemini(prompt, system)
+            except QuotaError as exc:
+                self._gemini_pause = time.monotonic() + exc.retry_after
+                log.warning(
+                    "Gemini 한도 초과 — %.0f초 일시중지%s",
+                    exc.retry_after, " · Groq 폴백" if self.groq_key else "",
+                )
+            except Exception:  # noqa: BLE001
+                log.warning("Gemini 호출 실패%s", " · Groq 폴백" if self.groq_key else "", exc_info=True)
+
+        if self.groq_key and time.monotonic() >= self._groq_pause:
+            try:
+                return await self._call_groq(prompt, system)
+            except QuotaError as exc:
+                self._groq_pause = time.monotonic() + exc.retry_after
+                log.warning("Groq 한도 초과 — %.0f초 일시중지", exc.retry_after)
+            except Exception:  # noqa: BLE001
+                log.warning("Groq 호출 실패", exc_info=True)
+
+        raise RuntimeError("사용 가능한 AI 백엔드가 없습니다.")
+
+    # ------------------------------------------------------------ 프롬프트 구성
     def _build_request(self, prompt: str) -> tuple[str, str]:
         """프롬프트를 (보낼 내용, system) 으로 변환. '번역' 으로 시작하면 번역 모드."""
         if prompt.startswith(TRANSLATE_KEYWORD):
@@ -101,7 +168,6 @@ class AIChat(commands.Cog):
             if first in LANG_MAP and rest.strip():
                 target, text = LANG_MAP[first], rest.strip()
                 if target == "일본어":
-                    # 일본어는 번역문 + 한글 발음을 함께 표기
                     return (
                         "다음 텍스트를 일본어로 번역하고, 그 일본어 문장의 발음을 한글로 적어줘.\n"
                         "다른 설명 없이 아래 두 줄 형식으로만 출력:\n"
@@ -138,15 +204,13 @@ class AIChat(commands.Cog):
         if not prompt:
             await message.reply(
                 "네! `하루야 <질문>` 으로 대화하거나 `하루야 번역 <문장>` 으로 번역할 수 있어요.",
-                mention_author=False,
-                allowed_mentions=SILENT,
+                mention_author=False, allowed_mentions=SILENT,
             )
             return
-        if not self.api_key:
+        if not self.gemini_key and not self.groq_key:
             await message.reply(
-                "AI 기능이 설정되지 않았습니다. 호스트 `.env` 에 `GEMINI_API_KEY` 를 추가해주세요.",
-                mention_author=False,
-                allowed_mentions=SILENT,
+                "AI 기능이 설정되지 않았습니다. 호스트 `.env` 에 `GEMINI_API_KEY`(또는 `GROQ_API_KEY`)를 추가해주세요.",
+                mention_author=False, allowed_mentions=SILENT,
             )
             return
 
@@ -160,8 +224,8 @@ class AIChat(commands.Cog):
             return
         self._last_call[message.author.id] = now
 
-        # 한도 초과로 일시정지 중이면 API 호출 없이 바로 안내(반복 429·로그 폭주 방지)
-        if now < self._paused_until:
+        # 모든 백엔드가 일시정지 중이면 호출 없이 바로 안내(반복 429·로그 폭주 방지)
+        if not self._available():
             await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
             return
 
@@ -169,18 +233,8 @@ class AIChat(commands.Cog):
         try:
             async with message.channel.typing():
                 answer = await self._ask(user_prompt, system)
-        except QuotaError as exc:
-            self._paused_until = time.monotonic() + exc.retry_after
-            log.warning("AI 무료 한도 초과 — 약 %.0f초 일시중지", exc.retry_after)  # traceback 생략
-            await message.reply(
-                "지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT
-            )
-            return
-        except Exception:  # noqa: BLE001 - 상세는 로그로만, 사용자에겐 통일 문구
-            log.warning("AI 호출 실패", exc_info=True)
-            await message.reply(
-                "지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT
-            )
+        except Exception:  # noqa: BLE001 - 상세는 _ask 에서 이미 로그, 사용자에겐 통일 문구
+            await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
             return
 
         await self._reply_chunks(message, answer)

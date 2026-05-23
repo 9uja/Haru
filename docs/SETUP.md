@@ -64,6 +64,12 @@ GEMINI_API_KEY=       # (선택) AI 대화 기능용
 - 무료 한도: `gemini-2.5-flash-lite` 기준 분당 15회 / 하루 1,000회 정도 → 소규모 서버에 충분
 - 주의: 무료 티어 입력은 모델 개선에 사용될 수 있으니 민감정보는 보내지 마세요.
 
+#### (선택) Groq 폴백 — 한도 더 키우기
+Gemini 한도 초과 시 자동으로 Groq(무료, 오픈 모델)로 전환됩니다. 평소엔 Gemini 품질 유지, 한도 차면 Groq가 받아 끊김 없음.
+1. [Groq Console](https://console.groq.com/keys) 가입(무료) → API 키 발급
+2. `.env` 에 `GROQ_API_KEY` 입력 (모델 변경은 `GROQ_MODEL`, 기본 `llama-3.3-70b-versatile`)
+- 동작 방식(트리거·번역·발음 표기 등)은 동일하나, Groq 응답 시 한국어/일본어 발음 품질은 모델에 따라 다소 다를 수 있습니다.
+
 ## 6. 실행
 
 ```powershell

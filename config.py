@@ -20,6 +20,8 @@ class Settings:
     gemini_api_key: str | None = None
     ai_cooldown_seconds: int = 10
     react_chance: float = 0.05
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
 
 
 def _require(name: str) -> str:
@@ -65,4 +67,6 @@ def load_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         ai_cooldown_seconds=_int_env("AI_COOLDOWN_SECONDS", 10),
         react_chance=_float_env("REACT_CHANCE", 0.05),
+        groq_api_key=os.getenv("GROQ_API_KEY") or None,
+        groq_model=os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile",
     )

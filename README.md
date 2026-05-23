@@ -69,7 +69,7 @@ HaruBot/
 ├── cogs/               # 기능 모듈
 │   ├── general.py      # /핑
 │   ├── voice_log.py    # 음성/멤버 추적, /로그채널설정·/활동확인·/전체확인·/스탯·/휴면, 자동 보고
-│   ├── ai_chat.py      # "하루야 …" 메시지 → Gemini 무료 API 대화/번역
+│   ├── ai_chat.py      # "하루야 …" 메시지 → Gemini(↔Groq 폴백) 대화/번역
 │   ├── fun.py          # 메시지에 랜덤 이모지 반응 (기본 5%, REACT_CHANCE)
 │   ├── welcome.py      # 신규 입장 랜덤 환영 + /채널안내
 │   └── moderation.py   # /유저경고 — 경고 추가 (목록은 /스탯)
