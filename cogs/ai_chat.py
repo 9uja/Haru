@@ -40,6 +40,10 @@ MSG_LIMIT = 2000
 SILENT = discord.AllowedMentions.none()
 PAUSE_DEFAULT = 30.0  # 429(한도 초과) 시 기본 일시정지(초)
 
+# 생성 파라미터: 대화는 약간 창의적으로, 번역은 저온도·짧게(반복 폭주 방지)
+GEN_CHAT = {"temperature": 0.7, "max_tokens": 800}
+GEN_TRANSLATE = {"temperature": 0.2, "max_tokens": 400}
+
 
 class QuotaError(RuntimeError):
     """무료 한도 초과(429). retry_after 초 동안 해당 백엔드 호출을 멈춘다."""
@@ -76,11 +80,14 @@ class AIChat(commands.Cog):
         await self.session.close()
 
     # ------------------------------------------------------------ 백엔드 호출
-    async def _call_gemini(self, prompt: str, system: str) -> str:
+    async def _call_gemini(self, prompt: str, system: str, gen: dict) -> str:
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": 800, "temperature": 0.7},
+            "generationConfig": {
+                "maxOutputTokens": gen["max_tokens"],
+                "temperature": gen["temperature"],
+            },
         }
         async with self.session.post(
             GEMINI_URL, params={"key": self.gemini_key}, json=payload,
@@ -98,15 +105,15 @@ class AIChat(commands.Cog):
         parts = candidates[0].get("content", {}).get("parts", [])
         return "".join(p.get("text", "") for p in parts).strip() or "(빈 응답)"
 
-    async def _call_groq(self, prompt: str, system: str) -> str:
+    async def _call_groq(self, prompt: str, system: str, gen: dict) -> str:
         payload = {
             "model": self.groq_model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": 800,
-            "temperature": 0.7,
+            "max_tokens": gen["max_tokens"],
+            "temperature": gen["temperature"],
         }
         headers = {"Authorization": f"Bearer {self.groq_key}"}
         async with self.session.post(
@@ -134,11 +141,11 @@ class AIChat(commands.Cog):
             return True
         return False
 
-    async def _ask(self, prompt: str, system: str = SYSTEM_HINT) -> str:
+    async def _ask(self, prompt: str, system: str = SYSTEM_HINT, gen: dict = GEN_CHAT) -> str:
         """Gemini 우선, 429/실패 시 Groq 폴백. 모두 불가하면 예외."""
         if self.gemini_key and time.monotonic() >= self._gemini_pause:
             try:
-                return await self._call_gemini(prompt, system)
+                return await self._call_gemini(prompt, system, gen)
             except QuotaError as exc:
                 self._gemini_pause = time.monotonic() + exc.retry_after
                 log.warning(
@@ -150,7 +157,7 @@ class AIChat(commands.Cog):
 
         if self.groq_key and time.monotonic() >= self._groq_pause:
             try:
-                return await self._call_groq(prompt, system)
+                return await self._call_groq(prompt, system, gen)
             except QuotaError as exc:
                 self._groq_pause = time.monotonic() + exc.retry_after
                 log.warning("Groq 한도 초과 — %.0f초 일시중지", exc.retry_after)
@@ -160,8 +167,8 @@ class AIChat(commands.Cog):
         raise RuntimeError("사용 가능한 AI 백엔드가 없습니다.")
 
     # ------------------------------------------------------------ 프롬프트 구성
-    def _build_request(self, prompt: str) -> tuple[str, str]:
-        """프롬프트를 (보낼 내용, system) 으로 변환. '번역' 으로 시작하면 번역 모드."""
+    def _build_request(self, prompt: str) -> tuple[str, str, dict]:
+        """프롬프트를 (보낼 내용, system, 생성파라미터) 로 변환. '번역' 으로 시작하면 번역 모드."""
         if prompt.startswith(TRANSLATE_KEYWORD):
             body = prompt[len(TRANSLATE_KEYWORD):].strip()
             first, _, rest = body.partition(" ")
@@ -169,17 +176,18 @@ class AIChat(commands.Cog):
                 target, text = LANG_MAP[first], rest.strip()
                 if target == "일본어":
                     return (
-                        "다음 텍스트를 일본어로 번역하고, 그 일본어 문장의 발음을 한글로 적어줘.\n"
-                        "다른 설명 없이 아래 두 줄 형식으로만 출력:\n"
-                        "<일본어 번역>\n(<한글 발음>)\n\n"
-                        f"텍스트: {text}"
-                    ), TRANSLATE_SYSTEM
-                return f"다음 텍스트를 {target}로 번역해줘:\n\n{text}", TRANSLATE_SYSTEM
+                        "한국어를 일본어로 번역하고, 그 일본어의 한글 발음을 괄호 안에 적어줘.\n"
+                        "설명·따옴표 없이 정확히 두 줄만 출력해.\n"
+                        "예) 입력: 안녕하세요\nこんにちは\n(콘니치와)\n\n"
+                        f"입력: {text}"
+                    ), TRANSLATE_SYSTEM, GEN_TRANSLATE
+                return f"다음 문장을 {target}로 번역해줘. 번역문만 출력:\n\n{text}", TRANSLATE_SYSTEM, GEN_TRANSLATE
             return (
-                f"다음 텍스트가 한국어면 영어로, 아니면 한국어로 번역해줘:\n\n{body}",
+                f"다음 문장이 한국어면 영어로, 아니면 한국어로 번역해줘. 번역문만 출력:\n\n{body}",
                 TRANSLATE_SYSTEM,
+                GEN_TRANSLATE,
             )
-        return prompt, SYSTEM_HINT
+        return prompt, SYSTEM_HINT, GEN_CHAT
 
     async def _reply_chunks(self, message: discord.Message, text: str) -> None:
         for i in range(0, len(text), MSG_LIMIT):
@@ -229,10 +237,10 @@ class AIChat(commands.Cog):
             await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
             return
 
-        user_prompt, system = self._build_request(prompt)
+        user_prompt, system, gen = self._build_request(prompt)
         try:
             async with message.channel.typing():
-                answer = await self._ask(user_prompt, system)
+                answer = await self._ask(user_prompt, system, gen)
         except Exception:  # noqa: BLE001 - 상세는 _ask 에서 이미 로그, 사용자에겐 통일 문구
             await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
             return
