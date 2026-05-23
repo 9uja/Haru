@@ -280,14 +280,24 @@ class Database:
         )
 
     # ------------------------------------------------------------ 범프 리마인더
-    async def set_bump_reminder(self, guild_id: int, channel_id: int, remind_at: datetime) -> None:
+    async def set_bump_channel(self, guild_id: int, channel_id: int) -> None:
+        """리마인더를 보낼 채널 지정(예약 시각은 보존)."""
         await self._execute(
-            "INSERT INTO bump_reminder (guild_id, channel_id, remind_at) VALUES ($1, $2, $3)"
-            " ON CONFLICT (guild_id) DO UPDATE SET channel_id = EXCLUDED.channel_id,"
-            " remind_at = EXCLUDED.remind_at",
+            "INSERT INTO bump_reminder (guild_id, channel_id) VALUES ($1, $2)"
+            " ON CONFLICT (guild_id) DO UPDATE SET channel_id = EXCLUDED.channel_id",
             guild_id,
             channel_id,
-            remind_at,
+        )
+
+    async def get_bump_channel(self, guild_id: int) -> Optional[int]:
+        return await self._fetchval(
+            "SELECT channel_id FROM bump_reminder WHERE guild_id = $1", guild_id
+        )
+
+    async def schedule_bump_reminder(self, guild_id: int, remind_at: datetime) -> None:
+        """채널이 지정된 경우에만 예약 시각 갱신(미지정이면 0행 → 무시)."""
+        await self._execute(
+            "UPDATE bump_reminder SET remind_at = $2 WHERE guild_id = $1", guild_id, remind_at
         )
 
     async def get_due_bump_reminder(self, guild_id: int) -> Optional[int]:
