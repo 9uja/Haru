@@ -17,6 +17,7 @@ INITIAL_COGS = (
     "cogs.fun",
     "cogs.welcome",
     "cogs.moderation",
+    "cogs.bump",
 )
 
 

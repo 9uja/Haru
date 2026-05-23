@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS warnings (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings (guild_id, user_id);
+
+-- 범프 리마인더: 다음 알림 시각(재시작에도 유지)
+CREATE TABLE IF NOT EXISTS bump_reminder (
+    guild_id   BIGINT PRIMARY KEY,
+    channel_id BIGINT,
+    remind_at  TIMESTAMPTZ
+);
 """
 
 
@@ -270,6 +277,30 @@ class Database:
             guild_id,
             user_id,
             limit,
+        )
+
+    # ------------------------------------------------------------ 범프 리마인더
+    async def set_bump_reminder(self, guild_id: int, channel_id: int, remind_at: datetime) -> None:
+        await self._execute(
+            "INSERT INTO bump_reminder (guild_id, channel_id, remind_at) VALUES ($1, $2, $3)"
+            " ON CONFLICT (guild_id) DO UPDATE SET channel_id = EXCLUDED.channel_id,"
+            " remind_at = EXCLUDED.remind_at",
+            guild_id,
+            channel_id,
+            remind_at,
+        )
+
+    async def get_due_bump_reminder(self, guild_id: int) -> Optional[int]:
+        """예약 시각이 지난 리마인더가 있으면 채널 ID 반환(없으면 None)."""
+        return await self._fetchval(
+            "SELECT channel_id FROM bump_reminder"
+            " WHERE guild_id = $1 AND remind_at IS NOT NULL AND remind_at <= now()",
+            guild_id,
+        )
+
+    async def clear_bump_reminder(self, guild_id: int) -> None:
+        await self._execute(
+            "UPDATE bump_reminder SET remind_at = NULL WHERE guild_id = $1", guild_id
         )
 
     async def get_activity_map(self, guild_id: int) -> dict[int, datetime]:
