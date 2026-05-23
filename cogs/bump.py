@@ -21,7 +21,10 @@ DISBOARD_ID = 302050872383242240
 BUMP_INTERVAL = timedelta(hours=2)
 SILENT = discord.AllowedMentions.none()
 # DISBOARD 범프 성공 표시(로케일 차이 대비 여러 마커). 쿨다운/실패 메시지엔 없음.
-SUCCESS_MARKERS = ("👍", "bump done", "bumped", "올렸", "올려", "범프 완료")
+SUCCESS_MARKERS = (
+    "👍", "thumbsup", "bump done", "bumped",
+    "올렸", "끌어올", "올려", "범프 완료", "범프했",
+)
 
 
 class Bump(commands.Cog):
@@ -46,12 +49,17 @@ class Bump(commands.Cog):
         self.bump_loop.cancel()
 
     @staticmethod
-    def _is_success(message: discord.Message) -> bool:
-        blob = message.content or ""
+    def _disboard_text(message: discord.Message) -> str:
+        """DISBOARD 메시지의 모든 텍스트(본문+임베드 제목/본문/푸터/필드)를 합친다."""
+        parts = [message.content or ""]
         for e in message.embeds:
-            blob += " " + (e.title or "") + " " + (e.description or "")
-        blob = blob.lower()
-        return any(marker.lower() in blob for marker in SUCCESS_MARKERS)
+            parts.append(e.title or "")
+            parts.append(e.description or "")
+            if e.footer and e.footer.text:
+                parts.append(e.footer.text)
+            for f in e.fields:
+                parts.append(f"{f.name or ''} {f.value or ''}")
+        return " ".join(p for p in parts if p)
 
     @app_commands.command(name="범프채널설정", description="DISBOARD 범프 리마인더를 보낼 채널을 지정합니다.")
     @app_commands.default_permissions(manage_guild=True)
@@ -80,10 +88,19 @@ class Bump(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         if message.guild is None or message.guild.id != self.guild_id:
             return
-        if message.author.id != DISBOARD_ID or not self._is_success(message):
+        if message.author.id != DISBOARD_ID:
             return
-        if self._channel_id is None:  # 채널 미설정 → 보낼 곳이 없으므로 무시
+
+        text = self._disboard_text(message)
+        success = any(marker.lower() in text.lower() for marker in SUCCESS_MARKERS)
+        # 진단 로그: DISBOARD 메시지가 올 때마다 감지 여부·채널설정·실제 텍스트 기록
+        log.info(
+            "DISBOARD 메시지 (성공감지=%s, 채널설정=%s): %.180s",
+            success, self._channel_id is not None, text.replace("\n", " "),
+        )
+        if not success or self._channel_id is None:
             return
+
         self._remind_at = datetime.now(timezone.utc) + BUMP_INTERVAL
         try:
             await self.db.schedule_bump_reminder(self.guild_id, self._remind_at)
@@ -93,7 +110,7 @@ class Bump(commands.Cog):
             await message.add_reaction("✅")  # 추적 중 표시(선택)
         except discord.HTTPException:
             pass
-        log.info("DISBOARD 범프 감지 → 2시간 뒤 리마인더 예약")
+        log.info("범프 감지 → 2시간 뒤 리마인더 예약")
 
     @tasks.loop(minutes=1)
     async def bump_loop(self) -> None:
