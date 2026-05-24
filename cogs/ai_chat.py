@@ -54,6 +54,10 @@ RANDOM_SYSTEM = (
 RANDOM_REPLY_COOLDOWN = 60.0  # 임의 답장 전역 쿨다운(초): 무료 쿼터 보호
 KNOWLEDGE_BUDGET = 1500  # 프롬프트에 넣을 지식 최대 문자 수
 
+# 자연어 기억 명령: "<내용> 기억해" / "기억해 <내용>" → 지식 영구 저장(관리자만)
+MEMORY_SUFFIX = ("기억해줘", "기억해둬", "기억해", "외워둬", "외워줘", "외워")
+MEMORY_PREFIX = ("기억해줘", "기억해둬", "기억해", "외워둬", "외워줘", "외워", "기억하기")
+
 
 class QuotaError(RuntimeError):
     """무료 한도 초과(429). retry_after 초 동안 해당 백엔드 호출을 멈춘다."""
@@ -231,14 +235,55 @@ class AIChat(commands.Cog):
         else:
             await self._maybe_random_reply(message, content)
 
+    @staticmethod
+    def _extract_memory(prompt: str) -> "str | None":
+        """기억 명령이면 저장할 내용을 반환(명령 아니면 None). 빈 내용이면 ''."""
+        p = prompt.strip()
+        for kw in MEMORY_SUFFIX:
+            if p.endswith(kw):
+                return p[: -len(kw)].strip(" \t\n,.!?·~:")
+        for kw in MEMORY_PREFIX:
+            if p.startswith(kw):
+                return p[len(kw):].strip(" \t\n,.!?·~:")
+        return None
+
     async def _handle_trigger(self, message: discord.Message, content: str) -> None:
         prompt = content[len(TRIGGER):].strip(" \t\n,.!?·~:;")
         if not prompt:
             await message.reply(
-                "네! `하루야 <질문>` 으로 대화하거나 `하루야 번역 <문장>` 으로 번역할 수 있어요.",
+                "네! `하루야 <질문>` 으로 대화하거나, `하루야 <내용> 기억해` 로 기억시킬 수 있어요.",
                 mention_author=False, allowed_mentions=SILENT,
             )
             return
+
+        # "<내용> 기억해" → 지식으로 영구 저장(서버 관리 권한자만)
+        mem = self._extract_memory(prompt)
+        if mem is not None:
+            if not message.author.guild_permissions.manage_guild:
+                await message.reply(
+                    "기억 추가는 서버 관리 권한이 있는 사람만 가능해요.",
+                    mention_author=False, allowed_mentions=SILENT,
+                )
+                return
+            if not mem:
+                await message.reply(
+                    "무엇을 기억할까요? 예) `하루야 내일 회의 3시 기억해`",
+                    mention_author=False, allowed_mentions=SILENT,
+                )
+                return
+            try:
+                kid = await self.db.add_knowledge(message.guild.id, mem[:500])
+                await message.reply(
+                    f"기억했어요! (#{kid}) 앞으로 `하루야` 대화에서 참고할게요.",
+                    mention_author=False, allowed_mentions=SILENT,
+                )
+            except Exception:  # noqa: BLE001
+                log.warning("기억 저장 실패", exc_info=True)
+                await message.reply(
+                    "지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT
+                )
+            return
+
         if not self.gemini_key and not self.groq_key:
             await message.reply(
                 "AI 기능이 설정되지 않았습니다. 호스트 `.env` 에 `GEMINI_API_KEY`(또는 `GROQ_API_KEY`)를 추가해주세요.",
