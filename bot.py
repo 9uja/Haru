@@ -18,6 +18,7 @@ INITIAL_COGS = (
     "cogs.welcome",
     "cogs.moderation",
     "cogs.bump",
+    "cogs.maintenance",
 )
 
 

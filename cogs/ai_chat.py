@@ -52,7 +52,8 @@ RANDOM_SYSTEM = (
     "한두 문장으로 짧게 끼어들어 답하세요. 너무 길거나 진지하지 않게."
 )
 RANDOM_REPLY_COOLDOWN = 60.0  # 임의 답장 전역 쿨다운(초): 무료 쿼터 보호
-KNOWLEDGE_BUDGET = 1500  # 프롬프트에 넣을 지식 최대 문자 수
+KNOWLEDGE_BUDGET = 1500  # 프롬프트에 넣을 서버 지식 최대 문자 수
+USER_MEMORY_BUDGET = 800  # 프롬프트에 넣을 개인 기억 최대 문자 수
 
 # 자연어 기억 명령: "<내용> 기억해" / "기억해 <내용>" → 지식 영구 저장(관리자만)
 MEMORY_SUFFIX = ("기억해줘", "기억해둬", "기억해", "외워둬", "외워줘", "외워")
@@ -215,6 +216,12 @@ class AIChat(commands.Cog):
         except Exception:  # noqa: BLE001 - 지식 조회 실패해도 대화는 진행
             return ""
 
+    async def _user_memory_context(self, guild_id: int, user_id: int) -> str:
+        try:
+            return await self.db.get_user_memory_context(guild_id, user_id, USER_MEMORY_BUDGET)
+        except Exception:  # noqa: BLE001 - 개인 기억 조회 실패해도 대화는 진행
+            return ""
+
     async def _reply_chunks(self, message: discord.Message, text: str) -> None:
         for i in range(0, len(text), MSG_LIMIT):
             chunk = text[i : i + MSG_LIMIT]
@@ -256,29 +263,24 @@ class AIChat(commands.Cog):
             )
             return
 
-        # "<내용> 기억해" → 지식으로 영구 저장(서버 관리 권한자만)
+        # "<내용> 기억해" → 개인 기억으로 영구 저장(누구나, 본인 대화에서만 참고)
         mem = self._extract_memory(prompt)
         if mem is not None:
-            if not message.author.guild_permissions.manage_guild:
-                await message.reply(
-                    "기억 추가는 서버 관리 권한이 있는 사람만 가능해요.",
-                    mention_author=False, allowed_mentions=SILENT,
-                )
-                return
             if not mem:
                 await message.reply(
-                    "무엇을 기억할까요? 예) `하루야 내일 회의 3시 기억해`",
+                    "무엇을 기억할까요? 예) `하루야 내 생일은 5월 3일 기억해`",
                     mention_author=False, allowed_mentions=SILENT,
                 )
                 return
             try:
-                kid = await self.db.add_knowledge(message.guild.id, mem[:500])
+                mid = await self.db.add_user_memory(message.guild.id, message.author.id, mem[:500])
                 await message.reply(
-                    f"기억했어요! (#{kid}) 앞으로 `하루야` 대화에서 참고할게요.",
+                    f"기억했어요! (#{mid}) {message.author.display_name} 님 개인 기억으로 저장했어요. "
+                    "(서버 전체 지식은 관리자가 `/기억추가` 로)",
                     mention_author=False, allowed_mentions=SILENT,
                 )
             except Exception:  # noqa: BLE001
-                log.warning("기억 저장 실패", exc_info=True)
+                log.warning("개인 기억 저장 실패", exc_info=True)
                 await message.reply(
                     "지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT
                 )
@@ -308,12 +310,17 @@ class AIChat(commands.Cog):
 
         user_prompt, system, gen, mode = self._build_request(prompt)
         if mode == "chat":
-            # 지식 주입 + 대화 맥락(채널별 최근 대화, DB 저장)으로 "기억하는" 답변
+            # 서버 지식 + 개인 기억 주입, 대화 맥락은 채널별+유저별 합쳐서
             kctx = await self._knowledge_context(message.guild.id)
+            uctx = await self._user_memory_context(message.guild.id, message.author.id)
             if kctx:
-                system = f"{system}\n\n[서버 참고 지식]\n{kctx}"
+                system = f"{system}\n\n[서버 지식]\n{kctx}"
+            if uctx:
+                system = f"{system}\n\n[{message.author.display_name} 님 개인 기억]\n{uctx}"
             try:
-                hist = await self.db.get_chat_history(message.channel.id, self.history_turns * 2)
+                hist = await self.db.get_context(
+                    message.guild.id, message.channel.id, message.author.id, self.history_turns * 2
+                )
             except Exception:  # noqa: BLE001 - 맥락 조회 실패해도 대화는 진행
                 hist = []
             if hist:
@@ -330,8 +337,8 @@ class AIChat(commands.Cog):
         if mode == "chat":
             try:
                 await self.db.add_chat_turns(
-                    message.guild.id, message.channel.id,
-                    [("사용자", prompt), ("하루", answer)], self.history_turns * 2,
+                    message.guild.id, message.channel.id, message.author.id,
+                    [("사용자", prompt), ("하루", answer)],
                 )
             except Exception:  # noqa: BLE001 - 기록 저장 실패는 대화에 영향 없음
                 log.warning("대화 기록 저장 실패", exc_info=True)
@@ -384,7 +391,7 @@ class AIChat(commands.Cog):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="기억삭제", description="저장된 지식을 번호로 삭제합니다.")
+    @app_commands.command(name="기억삭제", description="저장된 서버 지식을 번호로 삭제합니다.")
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(번호="삭제할 기억 번호(#)")
     async def knowledge_delete(self, interaction: discord.Interaction, 번호: int) -> None:
@@ -392,6 +399,40 @@ class AIChat(commands.Cog):
         ok = await self.db.delete_knowledge(interaction.guild_id, 번호)
         await interaction.followup.send(
             "삭제했어요." if ok else f"#{번호} 기억을 찾을 수 없어요.", ephemeral=True
+        )
+
+    # ------------------------------------------------------------ 개인 기억 명령(누구나)
+    @app_commands.command(name="내기억추가", description="나만의 개인 기억을 저장합니다(내 대화에서만 참고).")
+    @app_commands.describe(내용="기억시킬 내용")
+    async def user_memory_add(self, interaction: discord.Interaction, 내용: str) -> None:
+        text = 내용.strip()[:500]
+        if not text:
+            await interaction.response.send_message("내용을 입력하세요.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        mid = await self.db.add_user_memory(interaction.guild_id, interaction.user.id, text)
+        await interaction.followup.send(f"기억했어요! (#{mid}) 내 개인 기억으로 저장했어요.", ephemeral=True)
+
+    @app_commands.command(name="내기억목록", description="내 개인 기억을 봅니다.")
+    async def user_memory_list(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        rows = await self.db.list_user_memory(interaction.guild_id, interaction.user.id)
+        if not rows:
+            await interaction.followup.send("저장된 개인 기억이 없어요. `/내기억추가` 로 추가하세요.", ephemeral=True)
+            return
+        lines = [f"`#{r['id']}` {r['content'][:120]}" for r in rows]
+        embed = discord.Embed(
+            title="🧠 내 개인 기억", description="\n".join(lines)[:4000], color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="내기억삭제", description="내 개인 기억을 번호로 삭제합니다.")
+    @app_commands.describe(번호="삭제할 기억 번호(#)")
+    async def user_memory_delete(self, interaction: discord.Interaction, 번호: int) -> None:
+        await interaction.response.defer(ephemeral=True)
+        ok = await self.db.delete_user_memory(interaction.guild_id, interaction.user.id, 번호)
+        await interaction.followup.send(
+            "삭제했어요." if ok else f"#{번호} 개인 기억을 찾을 수 없어요.", ephemeral=True
         )
 
 

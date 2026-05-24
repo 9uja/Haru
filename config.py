@@ -24,6 +24,7 @@ class Settings:
     groq_model: str = "llama-3.3-70b-versatile"
     random_reply_chance: float = 0.02
     chat_history_turns: int = 8
+    chat_history_max_rows: int = 500000
 
 
 def _require(name: str) -> str:
@@ -73,4 +74,5 @@ def load_settings() -> Settings:
         groq_model=os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile",
         random_reply_chance=_float_env("REPLY_CHANCE", 0.02),
         chat_history_turns=_int_env("CHAT_HISTORY_TURNS", 8),
+        chat_history_max_rows=_int_env("CHAT_HISTORY_MAX_ROWS", 500000),
     )

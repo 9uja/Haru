@@ -72,16 +72,29 @@ CREATE TABLE IF NOT EXISTS knowledge (
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_guild ON knowledge (guild_id);
 
--- 채널별 대화 맥락(재시작에도 유지). 채널당 최근 N개만 보관(나머지 prune)
+-- 대화 맥락(재시작 유지). 채널별 + 유저별 조회. 전체는 DB 위험 시에만 오래된 순 정리.
 CREATE TABLE IF NOT EXISTS chat_history (
     id         BIGSERIAL PRIMARY KEY,
     guild_id   BIGINT NOT NULL,
     channel_id BIGINT NOT NULL,
+    user_id    BIGINT,
     role       TEXT NOT NULL,
     content    TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS user_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_chat_history_ch ON chat_history (channel_id, id);
+CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history (user_id, id);
+
+-- 유저별 개인 기억(본인 대화에서만 참고). 서버 지식(knowledge)과 분리.
+CREATE TABLE IF NOT EXISTS user_memory (
+    id         BIGSERIAL PRIMARY KEY,
+    guild_id   BIGINT NOT NULL,
+    user_id    BIGINT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_memory ON user_memory (guild_id, user_id, id);
 """
 
 
@@ -352,34 +365,88 @@ class Database:
         return deleted is not None
 
     # ------------------------------------------------------------ 대화 맥락
-    async def get_chat_history(self, channel_id: int, limit: int) -> list[asyncpg.Record]:
-        """채널의 최근 대화(오래된 순)."""
+    async def get_context(
+        self, guild_id: int, channel_id: int, user_id: int, limit: int
+    ) -> list[asyncpg.Record]:
+        """이 채널의 최근 대화 + 이 유저의 최근 대화(다른 채널 포함)를 합쳐 최근순 limit개, 오래된 순 반환."""
         rows = await self._fetch(
-            "SELECT role, content FROM chat_history WHERE channel_id = $1 ORDER BY id DESC LIMIT $2",
+            "SELECT role, content FROM chat_history "
+            "WHERE channel_id = $2 OR (guild_id = $1 AND user_id = $3) "
+            "ORDER BY id DESC LIMIT $4",
+            guild_id,
             channel_id,
+            user_id,
             limit,
         )
         return list(reversed(rows))
 
     async def add_chat_turns(
-        self, guild_id: int, channel_id: int, turns: list[tuple[str, str]], keep: int
+        self, guild_id: int, channel_id: int, user_id: int, turns: list[tuple[str, str]]
     ) -> None:
-        """대화 턴들을 저장하고 채널당 최근 keep개만 남기고 정리(한 커넥션에서)."""
+        """대화 턴 저장(정리는 별도 유지보수 루프에서 DB 위험 시에만)."""
+        await self._run(
+            lambda con: con.executemany(
+                "INSERT INTO chat_history (guild_id, channel_id, user_id, role, content)"
+                " VALUES ($1, $2, $3, $4, $5)",
+                [(guild_id, channel_id, user_id, role, content[:300]) for role, content in turns],
+            ),
+            retries=3,
+        )
 
-        async def op(con: asyncpg.Connection):
-            await con.executemany(
-                "INSERT INTO chat_history (guild_id, channel_id, role, content)"
-                " VALUES ($1, $2, $3, $4)",
-                [(guild_id, channel_id, role, content[:300]) for role, content in turns],
-            )
-            await con.execute(
-                "DELETE FROM chat_history WHERE channel_id = $1 AND id NOT IN "
-                "(SELECT id FROM chat_history WHERE channel_id = $1 ORDER BY id DESC LIMIT $2)",
-                channel_id,
-                keep,
-            )
+    async def count_chat_history(self) -> int:
+        return await self._fetchval("SELECT count(*) FROM chat_history") or 0
 
-        await self._run(op, retries=3)
+    async def prune_chat_history(self, keep: int) -> int:
+        """오래된 순으로 삭제하고 최신 keep개만 유지. 삭제 행 수 반환."""
+        return await self._fetchval(
+            "WITH del AS (DELETE FROM chat_history WHERE id NOT IN "
+            "(SELECT id FROM chat_history ORDER BY id DESC LIMIT $1) RETURNING 1) "
+            "SELECT count(*) FROM del",
+            keep,
+        ) or 0
+
+    # ------------------------------------------------------------ 유저 개인 기억
+    async def add_user_memory(self, guild_id: int, user_id: int, content: str) -> int:
+        return await self._fetchval(
+            "INSERT INTO user_memory (guild_id, user_id, content) VALUES ($1, $2, $3) RETURNING id",
+            guild_id,
+            user_id,
+            content,
+            retries=5,
+        )
+
+    async def list_user_memory(self, guild_id: int, user_id: int, limit: int = 50) -> list[asyncpg.Record]:
+        return await self._fetch(
+            "SELECT id, content FROM user_memory WHERE guild_id = $1 AND user_id = $2 ORDER BY id LIMIT $3",
+            guild_id,
+            user_id,
+            limit,
+        )
+
+    async def delete_user_memory(self, guild_id: int, user_id: int, memory_id: int) -> bool:
+        deleted = await self._fetchval(
+            "DELETE FROM user_memory WHERE guild_id = $1 AND user_id = $2 AND id = $3 RETURNING id",
+            guild_id,
+            user_id,
+            memory_id,
+        )
+        return deleted is not None
+
+    async def get_user_memory_context(self, guild_id: int, user_id: int, budget: int = 800) -> str:
+        rows = await self._fetch(
+            "SELECT content FROM user_memory WHERE guild_id = $1 AND user_id = $2 ORDER BY id DESC",
+            guild_id,
+            user_id,
+        )
+        out: list[str] = []
+        total = 0
+        for r in rows:
+            line = "- " + r["content"]
+            if total + len(line) + 1 > budget:
+                break
+            out.append(line)
+            total += len(line) + 1
+        return "\n".join(out)
 
     async def get_knowledge_context(self, guild_id: int, budget: int = 1500) -> str:
         """최근 지식부터 예산(문자 수) 안에서 합쳐 반환."""
