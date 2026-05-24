@@ -14,9 +14,11 @@ import logging
 import random
 import re
 import time
+from collections import deque
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 log = logging.getLogger(__name__)
@@ -51,6 +53,8 @@ RANDOM_SYSTEM = (
     "한두 문장으로 짧게 끼어들어 답하세요. 너무 길거나 진지하지 않게."
 )
 RANDOM_REPLY_COOLDOWN = 60.0  # 임의 답장 전역 쿨다운(초): 무료 쿼터 보호
+HISTORY_TURNS = 3  # 채널별 기억할 대화 턴 수(질문/답 쌍)
+KNOWLEDGE_BUDGET = 1500  # 프롬프트에 넣을 지식 최대 문자 수
 
 
 class QuotaError(RuntimeError):
@@ -74,6 +78,7 @@ def _parse_retry(message: str) -> float:
 class AIChat(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self.db = bot.db
         self.gemini_key = bot.settings.gemini_api_key
         self.groq_key = bot.settings.groq_api_key
         self.groq_model = bot.settings.groq_model
@@ -84,6 +89,7 @@ class AIChat(commands.Cog):
         self._gemini_pause = 0.0  # 이 시각까지 Gemini 호출 안 함(monotonic)
         self._groq_pause = 0.0
         self._last_random = 0.0  # 마지막 임의 답장 시각(monotonic)
+        self._history: dict[int, deque] = {}  # channel_id -> 최근 대화(역할, 내용)
         self.session = aiohttp.ClientSession()
 
     async def cog_unload(self) -> None:
@@ -177,8 +183,8 @@ class AIChat(commands.Cog):
         raise RuntimeError("사용 가능한 AI 백엔드가 없습니다.")
 
     # ------------------------------------------------------------ 프롬프트 구성
-    def _build_request(self, prompt: str) -> tuple[str, str, dict]:
-        """프롬프트를 (보낼 내용, system, 생성파라미터) 로 변환. '번역' 으로 시작하면 번역 모드."""
+    def _build_request(self, prompt: str) -> tuple[str, str, dict, str]:
+        """(보낼 내용, system, 생성파라미터, 모드). 모드: 'translate' | 'chat'."""
         if prompt.startswith(TRANSLATE_KEYWORD):
             body = prompt[len(TRANSLATE_KEYWORD):].strip()
             first, _, rest = body.partition(" ")
@@ -190,14 +196,26 @@ class AIChat(commands.Cog):
                         "설명·따옴표 없이 정확히 두 줄만 출력해.\n"
                         "예) 입력: 안녕하세요\nこんにちは\n(콘니치와)\n\n"
                         f"입력: {text}"
-                    ), TRANSLATE_SYSTEM, GEN_TRANSLATE
-                return f"다음 문장을 {target}로 번역해줘. 번역문만 출력:\n\n{text}", TRANSLATE_SYSTEM, GEN_TRANSLATE
+                    ), TRANSLATE_SYSTEM, GEN_TRANSLATE, "translate"
+                return (
+                    f"다음 문장을 {target}로 번역해줘. 번역문만 출력:\n\n{text}",
+                    TRANSLATE_SYSTEM, GEN_TRANSLATE, "translate",
+                )
             return (
                 f"다음 문장이 한국어면 영어로, 아니면 한국어로 번역해줘. 번역문만 출력:\n\n{body}",
-                TRANSLATE_SYSTEM,
-                GEN_TRANSLATE,
+                TRANSLATE_SYSTEM, GEN_TRANSLATE, "translate",
             )
-        return prompt, SYSTEM_HINT, GEN_CHAT
+        return prompt, SYSTEM_HINT, GEN_CHAT, "chat"
+
+    async def _knowledge_context(self, guild_id: int) -> str:
+        try:
+            return await self.db.get_knowledge_context(guild_id, KNOWLEDGE_BUDGET)
+        except Exception:  # noqa: BLE001 - 지식 조회 실패해도 대화는 진행
+            return ""
+
+    def _remember(self, channel_id: int, role: str, text: str) -> None:
+        dq = self._history.setdefault(channel_id, deque(maxlen=HISTORY_TURNS * 2))
+        dq.append((role, text[:300]))
 
     async def _reply_chunks(self, message: discord.Message, text: str) -> None:
         for i in range(0, len(text), MSG_LIMIT):
@@ -249,13 +267,27 @@ class AIChat(commands.Cog):
             await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
             return
 
-        user_prompt, system, gen = self._build_request(prompt)
+        user_prompt, system, gen, mode = self._build_request(prompt)
+        if mode == "chat":
+            # 지식 주입 + 대화 맥락(채널별 최근 대화)으로 "기억하는" 답변
+            kctx = await self._knowledge_context(message.guild.id)
+            if kctx:
+                system = f"{system}\n\n[서버 참고 지식]\n{kctx}"
+            hist = self._history.get(message.channel.id)
+            if hist:
+                convo = "\n".join(f"{r}: {c}" for r, c in hist)
+                user_prompt = f"[이전 대화]\n{convo}\n\n사용자: {prompt}"
+
         try:
             async with message.channel.typing():
                 answer = await self._ask(user_prompt, system, gen)
         except Exception:  # noqa: BLE001 - 상세는 _ask 에서 이미 로그, 사용자에겐 통일 문구
             await message.reply("지금은 잠시 쉴래요.", mention_author=False, allowed_mentions=SILENT)
             return
+
+        if mode == "chat":
+            self._remember(message.channel.id, "사용자", prompt)
+            self._remember(message.channel.id, "하루", answer)
 
         await self._reply_chunks(message, answer)
 
@@ -275,6 +307,45 @@ class AIChat(commands.Cog):
         except Exception:  # noqa: BLE001 - 임의 답장 실패는 조용히 무시
             return
         await self._reply_chunks(message, answer)
+
+    # ------------------------------------------------------------ 지식 관리 명령
+    @app_commands.command(name="기억추가", description="AI가 답변에 참고할 지식/정보를 저장합니다.")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(내용="기억시킬 내용")
+    async def knowledge_add(self, interaction: discord.Interaction, 내용: str) -> None:
+        text = 내용.strip()[:500]
+        if not text:
+            await interaction.response.send_message("내용을 입력하세요.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        kid = await self.db.add_knowledge(interaction.guild_id, text)
+        await interaction.followup.send(
+            f"기억했어요! (#{kid}) 앞으로 `하루야` 대화에서 참고할게요.", ephemeral=True
+        )
+
+    @app_commands.command(name="기억목록", description="저장된 AI 참고 지식을 봅니다.")
+    @app_commands.default_permissions(manage_guild=True)
+    async def knowledge_list(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        rows = await self.db.list_knowledge(interaction.guild_id)
+        if not rows:
+            await interaction.followup.send("저장된 기억이 없어요. `/기억추가` 로 추가하세요.", ephemeral=True)
+            return
+        lines = [f"`#{r['id']}` {r['content'][:120]}" for r in rows]
+        embed = discord.Embed(
+            title="🧠 저장된 기억", description="\n".join(lines)[:4000], color=discord.Color.teal()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="기억삭제", description="저장된 지식을 번호로 삭제합니다.")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.describe(번호="삭제할 기억 번호(#)")
+    async def knowledge_delete(self, interaction: discord.Interaction, 번호: int) -> None:
+        await interaction.response.defer(ephemeral=True)
+        ok = await self.db.delete_knowledge(interaction.guild_id, 번호)
+        await interaction.followup.send(
+            "삭제했어요." if ok else f"#{번호} 기억을 찾을 수 없어요.", ephemeral=True
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

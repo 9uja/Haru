@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS bump_reminder (
     channel_id BIGINT,
     remind_at  TIMESTAMPTZ
 );
+
+-- AI 참고 지식(관리자가 저장 → 답변에 활용)
+CREATE TABLE IF NOT EXISTS knowledge (
+    id         BIGSERIAL PRIMARY KEY,
+    guild_id   BIGINT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_guild ON knowledge (guild_id);
 """
 
 
@@ -306,6 +315,45 @@ class Database:
         await self._execute(
             "UPDATE bump_reminder SET remind_at = NULL WHERE guild_id = $1", guild_id
         )
+
+    # ------------------------------------------------------------ AI 지식
+    async def add_knowledge(self, guild_id: int, content: str) -> int:
+        return await self._fetchval(
+            "INSERT INTO knowledge (guild_id, content) VALUES ($1, $2) RETURNING id",
+            guild_id,
+            content,
+            retries=5,
+        )
+
+    async def list_knowledge(self, guild_id: int, limit: int = 50) -> list[asyncpg.Record]:
+        return await self._fetch(
+            "SELECT id, content FROM knowledge WHERE guild_id = $1 ORDER BY id LIMIT $2",
+            guild_id,
+            limit,
+        )
+
+    async def delete_knowledge(self, guild_id: int, knowledge_id: int) -> bool:
+        deleted = await self._fetchval(
+            "DELETE FROM knowledge WHERE guild_id = $1 AND id = $2 RETURNING id",
+            guild_id,
+            knowledge_id,
+        )
+        return deleted is not None
+
+    async def get_knowledge_context(self, guild_id: int, budget: int = 1500) -> str:
+        """최근 지식부터 예산(문자 수) 안에서 합쳐 반환."""
+        rows = await self._fetch(
+            "SELECT content FROM knowledge WHERE guild_id = $1 ORDER BY id DESC", guild_id
+        )
+        out: list[str] = []
+        total = 0
+        for r in rows:
+            line = "- " + r["content"]
+            if total + len(line) + 1 > budget:
+                break
+            out.append(line)
+            total += len(line) + 1
+        return "\n".join(out)
 
     async def get_activity_map(self, guild_id: int) -> dict[int, datetime]:
         """길드 내 user_id -> 마지막 활동시각 매핑. 비활성 판정에 사용."""
