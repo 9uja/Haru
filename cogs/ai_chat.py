@@ -14,7 +14,6 @@ import logging
 import random
 import re
 import time
-from collections import deque
 
 import aiohttp
 import discord
@@ -53,7 +52,6 @@ RANDOM_SYSTEM = (
     "한두 문장으로 짧게 끼어들어 답하세요. 너무 길거나 진지하지 않게."
 )
 RANDOM_REPLY_COOLDOWN = 60.0  # 임의 답장 전역 쿨다운(초): 무료 쿼터 보호
-HISTORY_TURNS = 3  # 채널별 기억할 대화 턴 수(질문/답 쌍)
 KNOWLEDGE_BUDGET = 1500  # 프롬프트에 넣을 지식 최대 문자 수
 
 
@@ -89,7 +87,7 @@ class AIChat(commands.Cog):
         self._gemini_pause = 0.0  # 이 시각까지 Gemini 호출 안 함(monotonic)
         self._groq_pause = 0.0
         self._last_random = 0.0  # 마지막 임의 답장 시각(monotonic)
-        self._history: dict[int, deque] = {}  # channel_id -> 최근 대화(역할, 내용)
+        self.history_turns = bot.settings.chat_history_turns  # 채널별 기억 턴 수(DB 저장)
         self.session = aiohttp.ClientSession()
 
     async def cog_unload(self) -> None:
@@ -213,10 +211,6 @@ class AIChat(commands.Cog):
         except Exception:  # noqa: BLE001 - 지식 조회 실패해도 대화는 진행
             return ""
 
-    def _remember(self, channel_id: int, role: str, text: str) -> None:
-        dq = self._history.setdefault(channel_id, deque(maxlen=HISTORY_TURNS * 2))
-        dq.append((role, text[:300]))
-
     async def _reply_chunks(self, message: discord.Message, text: str) -> None:
         for i in range(0, len(text), MSG_LIMIT):
             chunk = text[i : i + MSG_LIMIT]
@@ -269,13 +263,16 @@ class AIChat(commands.Cog):
 
         user_prompt, system, gen, mode = self._build_request(prompt)
         if mode == "chat":
-            # 지식 주입 + 대화 맥락(채널별 최근 대화)으로 "기억하는" 답변
+            # 지식 주입 + 대화 맥락(채널별 최근 대화, DB 저장)으로 "기억하는" 답변
             kctx = await self._knowledge_context(message.guild.id)
             if kctx:
                 system = f"{system}\n\n[서버 참고 지식]\n{kctx}"
-            hist = self._history.get(message.channel.id)
+            try:
+                hist = await self.db.get_chat_history(message.channel.id, self.history_turns * 2)
+            except Exception:  # noqa: BLE001 - 맥락 조회 실패해도 대화는 진행
+                hist = []
             if hist:
-                convo = "\n".join(f"{r}: {c}" for r, c in hist)
+                convo = "\n".join(f"{r['role']}: {r['content']}" for r in hist)
                 user_prompt = f"[이전 대화]\n{convo}\n\n사용자: {prompt}"
 
         try:
@@ -286,8 +283,13 @@ class AIChat(commands.Cog):
             return
 
         if mode == "chat":
-            self._remember(message.channel.id, "사용자", prompt)
-            self._remember(message.channel.id, "하루", answer)
+            try:
+                await self.db.add_chat_turns(
+                    message.guild.id, message.channel.id,
+                    [("사용자", prompt), ("하루", answer)], self.history_turns * 2,
+                )
+            except Exception:  # noqa: BLE001 - 기록 저장 실패는 대화에 영향 없음
+                log.warning("대화 기록 저장 실패", exc_info=True)
 
         await self._reply_chunks(message, answer)
 

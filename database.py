@@ -71,6 +71,17 @@ CREATE TABLE IF NOT EXISTS knowledge (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_guild ON knowledge (guild_id);
+
+-- 채널별 대화 맥락(재시작에도 유지). 채널당 최근 N개만 보관(나머지 prune)
+CREATE TABLE IF NOT EXISTS chat_history (
+    id         BIGSERIAL PRIMARY KEY,
+    guild_id   BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
+    role       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_history_ch ON chat_history (channel_id, id);
 """
 
 
@@ -339,6 +350,36 @@ class Database:
             knowledge_id,
         )
         return deleted is not None
+
+    # ------------------------------------------------------------ 대화 맥락
+    async def get_chat_history(self, channel_id: int, limit: int) -> list[asyncpg.Record]:
+        """채널의 최근 대화(오래된 순)."""
+        rows = await self._fetch(
+            "SELECT role, content FROM chat_history WHERE channel_id = $1 ORDER BY id DESC LIMIT $2",
+            channel_id,
+            limit,
+        )
+        return list(reversed(rows))
+
+    async def add_chat_turns(
+        self, guild_id: int, channel_id: int, turns: list[tuple[str, str]], keep: int
+    ) -> None:
+        """대화 턴들을 저장하고 채널당 최근 keep개만 남기고 정리(한 커넥션에서)."""
+
+        async def op(con: asyncpg.Connection):
+            await con.executemany(
+                "INSERT INTO chat_history (guild_id, channel_id, role, content)"
+                " VALUES ($1, $2, $3, $4)",
+                [(guild_id, channel_id, role, content[:300]) for role, content in turns],
+            )
+            await con.execute(
+                "DELETE FROM chat_history WHERE channel_id = $1 AND id NOT IN "
+                "(SELECT id FROM chat_history WHERE channel_id = $1 ORDER BY id DESC LIMIT $2)",
+                channel_id,
+                keep,
+            )
+
+        await self._run(op, retries=3)
 
     async def get_knowledge_context(self, guild_id: int, budget: int = 1500) -> str:
         """최근 지식부터 예산(문자 수) 안에서 합쳐 반환."""
