@@ -72,11 +72,11 @@ class VoiceLog(commands.Cog):
         channel = self.bot.get_channel(self.log_channel_id)
         return channel if isinstance(channel, discord.TextChannel) else None
 
-    async def _log(self, text: str) -> None:
+    async def _send_log(self, embed: discord.Embed) -> None:
         channel = await self._log_channel()
         if channel is not None:
             try:
-                await channel.send(text, allowed_mentions=SILENT)
+                await channel.send(embed=embed, allowed_mentions=SILENT)
             except discord.HTTPException:
                 log.warning("로그 채널 전송 실패", exc_info=True)
 
@@ -115,12 +115,22 @@ class VoiceLog(commands.Cog):
             self.session_starts[key] = now
             await self.db.touch_active(member.guild.id, member.id, now)
             await self._clear_dormant(member)  # 활동 복귀 시 휴면 역할 자동 해제
-            await self._log(f"🔊 {member.mention} 음성 입장 — **{after.channel.name}**")
+            embed = discord.Embed(
+                description=f"{member.mention} 님이 음성 채널 **{after.channel.name}** 에 입장",
+                color=discord.Color.blue(), timestamp=now,
+            )
+            embed.set_footer(text="🔊 음성 입장")
+            await self._send_log(embed)
         elif left:
             start = self.session_starts.pop(key, None)
             seconds = int((now - start).total_seconds()) if start else 0
             await self.db.add_session(member.guild.id, member.id, seconds, now)
-            await self._log(f"🔇 {member.mention} 음성 퇴장 — 체류 {_fmt_duration(seconds)}")
+            embed = discord.Embed(
+                description=f"{member.mention} 님이 음성 채널을 나감 · 체류 {_fmt_duration(seconds)}",
+                color=discord.Color.greyple(), timestamp=now,
+            )
+            embed.set_footer(text="🔇 음성 퇴장")
+            await self._send_log(embed)
         elif after.channel is not None:
             # 채널 이동·음소거 등: 활동 유지로 보고 last_active 만 갱신
             self.session_starts.setdefault(key, now)
@@ -133,7 +143,24 @@ class VoiceLog(commands.Cog):
             return
         now = datetime.now(timezone.utc)
         count = await self.db.record_member_join(member.guild.id, member.id, now)
-        await self._log(f"📥 {member.mention} 서버 입장 (누적 {count}회)")
+
+        created = member.created_at
+        embed = discord.Embed(
+            description=f"{member.mention} 님이 서버에 참가했어요.",
+            color=discord.Color.green(), timestamp=now,
+        )
+        embed.set_author(name=str(member), icon_url=member.display_avatar.url)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(
+            name="계정 생성일",
+            value=f"{discord.utils.format_dt(created, 'D')} ({discord.utils.format_dt(created, 'R')})",
+            inline=False,
+        )
+        embed.add_field(name="누적 입장", value=f"{count}회")
+        if (now - created) < timedelta(days=7):
+            embed.add_field(name="⚠️ 주의", value="생성된 지 얼마 안 된 계정", inline=False)
+        embed.set_footer(text="📥 멤버 입장")
+        await self._send_log(embed)
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member) -> None:
@@ -142,7 +169,18 @@ class VoiceLog(commands.Cog):
             return
         now = datetime.now(timezone.utc)
         count = await self.db.record_member_leave(member.guild.id, member.id, now)
-        await self._log(f"📤 {member.mention} (`{member}`) 서버 퇴장 (누적 {count}회)")
+
+        embed = discord.Embed(
+            description=f"{member.mention} (`{member}`) 님이 서버를 떠났어요.",
+            color=discord.Color.dark_grey(), timestamp=now,
+        )
+        embed.set_author(name=str(member), icon_url=member.display_avatar.url)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(name="누적 퇴장", value=f"{count}회")
+        if member.joined_at:
+            embed.add_field(name="함께한 기간", value=discord.utils.format_dt(member.joined_at, "R"))
+        embed.set_footer(text="📤 멤버 퇴장")
+        await self._send_log(embed)
 
     # --------------------------------------------------------------- inactive 계산
     async def _collect_inactive(
