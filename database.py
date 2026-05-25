@@ -282,6 +282,19 @@ class Database:
             user_id,
         )
 
+    async def get_member_stats(self, guild_id: int, user_id: int) -> asyncpg.Record:
+        """로그 임베드용 통합 스탯(음성·입퇴장·경고)을 한 번에. 없는 값은 NULL."""
+        return await self._fetchrow(
+            "SELECT "
+            "(SELECT total_seconds FROM voice_activity WHERE guild_id=$1 AND user_id=$2) AS total_seconds, "
+            "(SELECT last_active FROM voice_activity WHERE guild_id=$1 AND user_id=$2) AS last_active, "
+            "(SELECT join_count FROM member_log WHERE guild_id=$1 AND user_id=$2) AS join_count, "
+            "(SELECT leave_count FROM member_log WHERE guild_id=$1 AND user_id=$2) AS leave_count, "
+            "(SELECT count(*) FROM warnings WHERE guild_id=$1 AND user_id=$2) AS warn_count",
+            guild_id,
+            user_id,
+        )
+
     # ------------------------------------------------------------ 경고
     async def add_warning(
         self, guild_id: int, user_id: int, moderator_id: int, reason: str, when: datetime

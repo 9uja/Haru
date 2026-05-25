@@ -80,6 +80,17 @@ class VoiceLog(commands.Cog):
             except discord.HTTPException:
                 log.warning("로그 채널 전송 실패", exc_info=True)
 
+    async def _add_stats(self, embed: discord.Embed, member: discord.Member) -> None:
+        """로그 임베드에 해당 유저의 스탯을 필드로 추가(통합 1쿼리)."""
+        try:
+            s = await self.db.get_member_stats(member.guild.id, member.id)
+        except Exception:  # noqa: BLE001 - 스탯 실패해도 로그는 전송
+            return
+        embed.add_field(name="서버 입·퇴장", value=f"{s['join_count'] or 0}회 / {s['leave_count'] or 0}회")
+        embed.add_field(name="누적 음성", value=_fmt_duration(s["total_seconds"] or 0))
+        embed.add_field(name="최근 활동", value=days_ago(s["last_active"]))
+        embed.add_field(name="경고", value=f"{s['warn_count'] or 0}회")
+
     # ------------------------------------------------------------------ events
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -119,6 +130,8 @@ class VoiceLog(commands.Cog):
                 description=f"{member.mention} 님이 음성 채널 **{after.channel.name}** 에 입장",
                 color=discord.Color.blue(), timestamp=now,
             )
+            embed.set_author(name=str(member), icon_url=member.display_avatar.url)
+            await self._add_stats(embed, member)
             embed.set_footer(text="🔊 음성 입장")
             await self._send_log(embed)
         elif left:
@@ -129,6 +142,8 @@ class VoiceLog(commands.Cog):
                 description=f"{member.mention} 님이 음성 채널을 나감 · 체류 {_fmt_duration(seconds)}",
                 color=discord.Color.greyple(), timestamp=now,
             )
+            embed.set_author(name=str(member), icon_url=member.display_avatar.url)
+            await self._add_stats(embed, member)
             embed.set_footer(text="🔇 음성 퇴장")
             await self._send_log(embed)
         elif after.channel is not None:
@@ -142,7 +157,7 @@ class VoiceLog(commands.Cog):
         if member.bot or member.guild.id != self.guild_id:
             return
         now = datetime.now(timezone.utc)
-        count = await self.db.record_member_join(member.guild.id, member.id, now)
+        await self.db.record_member_join(member.guild.id, member.id, now)
 
         created = member.created_at
         embed = discord.Embed(
@@ -156,7 +171,7 @@ class VoiceLog(commands.Cog):
             value=f"{discord.utils.format_dt(created, 'D')} ({discord.utils.format_dt(created, 'R')})",
             inline=False,
         )
-        embed.add_field(name="누적 입장", value=f"{count}회")
+        await self._add_stats(embed, member)
         if (now - created) < timedelta(days=7):
             embed.add_field(name="⚠️ 주의", value="생성된 지 얼마 안 된 계정", inline=False)
         embed.set_footer(text="📥 멤버 입장")
@@ -168,7 +183,7 @@ class VoiceLog(commands.Cog):
         if member.bot or member.guild.id != self.guild_id:
             return
         now = datetime.now(timezone.utc)
-        count = await self.db.record_member_leave(member.guild.id, member.id, now)
+        await self.db.record_member_leave(member.guild.id, member.id, now)
 
         embed = discord.Embed(
             description=f"{member.mention} (`{member}`) 님이 서버를 떠났어요.",
@@ -176,7 +191,7 @@ class VoiceLog(commands.Cog):
         )
         embed.set_author(name=str(member), icon_url=member.display_avatar.url)
         embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="누적 퇴장", value=f"{count}회")
+        await self._add_stats(embed, member)
         if member.joined_at:
             embed.add_field(name="함께한 기간", value=discord.utils.format_dt(member.joined_at, "R"))
         embed.set_footer(text="📤 멤버 퇴장")
