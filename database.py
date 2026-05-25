@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS bump_reminder (
     remind_at  TIMESTAMPTZ
 );
 
+-- 범프 알림 구독자(유저가 직접 /범프알림 으로 추가, 알림 시 멘션)
+CREATE TABLE IF NOT EXISTS bump_subscribers (
+    guild_id BIGINT NOT NULL,
+    user_id  BIGINT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+
 -- AI 참고 지식(관리자가 저장 → 답변에 활용)
 CREATE TABLE IF NOT EXISTS knowledge (
     id         BIGSERIAL PRIMARY KEY,
@@ -352,6 +359,27 @@ class Database:
         await self._execute(
             "UPDATE bump_reminder SET remind_at = NULL WHERE guild_id = $1", guild_id
         )
+
+    async def toggle_bump_subscriber(self, guild_id: int, user_id: int) -> bool:
+        """구독 토글. 구독되면 True, 해제되면 False 반환."""
+        inserted = await self._fetchval(
+            "INSERT INTO bump_subscribers (guild_id, user_id) VALUES ($1, $2)"
+            " ON CONFLICT DO NOTHING RETURNING 1",
+            guild_id,
+            user_id,
+        )
+        if inserted:
+            return True
+        await self._execute(
+            "DELETE FROM bump_subscribers WHERE guild_id = $1 AND user_id = $2", guild_id, user_id
+        )
+        return False
+
+    async def list_bump_subscribers(self, guild_id: int) -> list[int]:
+        rows = await self._fetch(
+            "SELECT user_id FROM bump_subscribers WHERE guild_id = $1", guild_id
+        )
+        return [r["user_id"] for r in rows]
 
     # ------------------------------------------------------------ AI 지식
     async def add_knowledge(self, guild_id: int, content: str) -> int:

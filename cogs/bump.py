@@ -85,6 +85,18 @@ class Bump(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(name="범프알림", description="범프 가능 시 멘션 알림을 켜고/끕니다(나에게).")
+    async def bump_notify(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        on = await self.db.toggle_bump_subscriber(interaction.guild_id, interaction.user.id)
+        if on:
+            await interaction.followup.send(
+                "🔔 범프 알림을 켰어요! 범프 가능 시 멘션해 드릴게요. (다시 입력하면 해제)",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send("🔕 범프 알림을 껐어요.", ephemeral=True)
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         if message.guild is None or message.guild.id != self.guild_id:
@@ -125,10 +137,17 @@ class Bump(commands.Cog):
             guild = self.bot.get_guild(self.guild_id)
             channel = guild.get_channel(self._channel_id) if guild else None
             if isinstance(channel, discord.TextChannel):
-                await channel.send(
-                    "🔔 범프 시간이에요! `/bump` 를 입력해 서버를 올려주세요.",
-                    allowed_mentions=SILENT,
-                )
+                subs = await self.db.list_bump_subscribers(self.guild_id)
+                base = "🔔 범프 시간이에요! `/bump` 를 입력해 서버를 올려주세요."
+                if not subs:
+                    await channel.send(base, allowed_mentions=SILENT)
+                else:
+                    # 구독자 멘션(핑). 한 메시지당 80명씩 나눠 전송
+                    allow = discord.AllowedMentions(users=True, roles=False, everyone=False)
+                    for i in range(0, len(subs), 80):
+                        chunk = " ".join(f"<@{u}>" for u in subs[i : i + 80])
+                        content = f"{base}\n{chunk}" if i == 0 else chunk
+                        await channel.send(content, allowed_mentions=allow)
             await self.db.clear_bump_reminder(self.guild_id)
         except Exception:
             log.warning("범프 리마인더 발송 실패", exc_info=True)
