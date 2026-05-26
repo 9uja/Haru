@@ -137,17 +137,34 @@ class Bump(commands.Cog):
             guild = self.bot.get_guild(self.guild_id)
             channel = guild.get_channel(self._channel_id) if guild else None
             if isinstance(channel, discord.TextChannel):
+                embed = discord.Embed(
+                    title="🔔 범프 시간이에요!",
+                    description="`/bump` 를 입력해 서버를 올려주세요.",
+                    color=discord.Color.gold(),
+                    timestamp=datetime.now(timezone.utc),
+                )
+                embed.add_field(
+                    name="💡 알림 받기",
+                    value=(
+                        "`/범프알림` 으로 본인을 구독하면 **다음 알림부터 멘션**으로 받을 수 있어요.\n"
+                        "다시 `/범프알림` 을 입력하면 구독이 해제됩니다."
+                    ),
+                    inline=False,
+                )
+                embed.set_footer(text="범프 후 약 2시간 뒤 다시 가능")
+
                 subs = await self.db.list_bump_subscribers(self.guild_id)
-                base = "🔔 범프 시간이에요! `/bump` 를 입력해 서버를 올려주세요."
+                # 임베드 멘션은 핑이 안 가서, 멘션은 메시지 본문에 넣어 보낸다.
                 if not subs:
-                    await channel.send(base, allowed_mentions=SILENT)
+                    await channel.send(embed=embed, allowed_mentions=SILENT)
                 else:
-                    # 구독자 멘션(핑). 한 메시지당 80명씩 나눠 전송
                     allow = discord.AllowedMentions(users=True, roles=False, everyone=False)
                     for i in range(0, len(subs), 80):
                         chunk = " ".join(f"<@{u}>" for u in subs[i : i + 80])
-                        content = f"{base}\n{chunk}" if i == 0 else chunk
-                        await channel.send(content, allowed_mentions=allow)
+                        if i == 0:
+                            await channel.send(content=chunk, embed=embed, allowed_mentions=allow)
+                        else:
+                            await channel.send(content=chunk, allowed_mentions=allow)
             await self.db.clear_bump_reminder(self.guild_id)
         except Exception:
             log.warning("범프 리마인더 발송 실패", exc_info=True)
