@@ -15,6 +15,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from http_guard import GUARD
 from views import MemberListView, build_static_embed, days_ago
 
 log = logging.getLogger(__name__)
@@ -73,6 +74,10 @@ class VoiceLog(commands.Cog):
         return channel if isinstance(channel, discord.TextChannel) else None
 
     async def _send_log(self, embed: discord.Embed) -> None:
+        # Cloudflare 1015 가드: 차단 동안엔 로그 송신을 완전히 스킵해서 차단 연장을 막음.
+        # 음성 입·퇴장은 가장 잦은 송신이라 이 한 곳만 막아도 효과가 크다.
+        if GUARD.is_paused():
+            return
         channel = await self._log_channel()
         if channel is not None:
             try:

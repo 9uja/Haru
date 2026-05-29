@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 import discord
 from discord.ext import commands
 
 from config import Settings, load_settings
 from database import Database
+from http_guard import HttpGuard, install_http_hook
 from keepalive import start_health_server
 
 INITIAL_COGS = (
@@ -19,6 +21,10 @@ INITIAL_COGS = (
     "cogs.moderation",
     "cogs.bump",
     "cogs.maintenance",
+    "cogs.admin",  # 오너 전용 /관리 그룹 (OWNER_ID 한정)
+    "cogs.leveling",  # 메시지/음성 XP 기반 레벨링 (/레벨, /랭킹)
+    "cogs.stats_rpg",  # RPG 스탯 (힘/민첩/지능/행운), 레벨 손실 시 자동 환불
+    "cogs.raid",       # 보스 레이드 Phase 1 (fire_golem, 평타 only)
 )
 
 
@@ -42,6 +48,9 @@ class HaruBot(commands.Bot):
             # /inactive·/activity 등에서 필요할 때 guild.chunk() 로 on-demand 로드
             chunk_guilds_at_startup=False,
         )
+        # Cloudflare 1015(IP 차단) 감지 후 outbound 송신을 자동 일시정지하는 가드.
+        # super().__init__() 이후 self.http 가 만들어져 있어야 후킹 가능.
+        install_http_hook(self)
 
     async def setup_hook(self) -> None:
         await self.db.connect(self.settings.database_url)
@@ -85,7 +94,23 @@ def main() -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
     bot = HaruBot(settings)
-    bot.run(settings.token, log_handler=None)
+    try:
+        bot.run(settings.token, log_handler=None)
+    except discord.HTTPException as exc:
+        # Cloudflare 1015: 호스트 IP 가 차단된 상태. 자동 재시작이 차단을 더 연장하므로
+        # 매우 분명한 메시지와 함께 비정상 종료(코드 2)해서 Wispbyte 의 60초 재시도
+        # 차단 패턴(연속 크래시 보호)을 유도한다. 사용자는 6~12시간 STOP 유지 권장.
+        if exc.status == 429 and HttpGuard.looks_like_1015(str(exc)):
+            border = "=" * 64
+            logging.critical(
+                "\n%s\nCloudflare 1015 — 호스트 IP 가 일시 차단되었습니다.\n"
+                "  · 봇을 **STOP** 한 채로 6~12시간 두세요. 재시작은 차단을 더 길게 만듭니다.\n"
+                "  · 노드 변경이 가능하면 Wispbyte 에 IP 교체를 요청하세요.\n"
+                "  · 단독 IP 가 필요하면 Oracle Cloud 무료 VM 으로 이전 (docs/DEPLOY.md).\n%s",
+                border, border,
+            )
+            sys.exit(2)
+        raise
 
 
 if __name__ == "__main__":

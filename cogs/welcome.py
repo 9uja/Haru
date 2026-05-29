@@ -13,6 +13,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from http_guard import GUARD
+
 WELCOMES = [
     "{member} 님 환영해요! 🎉 편하게 둘러보세요~",
     "어서오세요 {member} 님! 만나서 반가워요 😄",
@@ -43,6 +45,8 @@ class Welcome(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
         if member.bot or member.guild.id != self.guild_id:
+            return
+        if GUARD.is_paused():  # 1015 차단 동안엔 환영 메시지 스킵
             return
         channel = await self._welcome_channel(member.guild)
         if channel is None:

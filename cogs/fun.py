@@ -10,6 +10,8 @@ import random
 import discord
 from discord.ext import commands
 
+from http_guard import GUARD
+
 EMOJIS = [
     "😄", "🎉", "👍", "🔥", "✨", "😎", "🥳", "💯", "👀", "🙌",
     "😆", "❤️", "⭐", "🤔", "👏", "🍀", "🌟", "😺", "🎶", "🫡",
@@ -29,6 +31,8 @@ class Fun(commands.Cog):
         if message.guild.id != self.guild_id:
             return
         if random.random() >= self.chance:
+            return
+        if GUARD.is_paused():  # 1015 차단 동안엔 이모지 반응 스킵
             return
         try:
             await message.add_reaction(random.choice(EMOJIS))
