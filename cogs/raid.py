@@ -1371,21 +1371,32 @@ class Raid(commands.Cog):
             await interaction.response.send_message("서버에서만 사용할 수 있어요.", ephemeral=True)
             return
 
+        # 즉시 defer — Neon 콜드 스타트 + 다수 쿼리로 3초 초과 시 10062 방지.
+        # 이후 모든 응답은 edit_original_response 로 (단일 메시지 유지 → on_timeout 도 동일 메시지 edit).
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.HTTPException:
+            return  # 이미 만료/응답된 인터랙션 — 조용히 종료
+
         raid = await self._get_active()
         if raid is None:
-            await interaction.response.send_message(
-                "진행 중인 레이드가 없어요. 관리자가 `/레이드소환` 으로 시작합니다.",
-                ephemeral=True,
-            )
+            try:
+                await interaction.edit_original_response(
+                    content="진행 중인 레이드가 없어요. 관리자가 `/레이드소환` 으로 시작합니다.",
+                )
+            except discord.HTTPException:
+                pass
             return
 
         # 전용 채널 게이트: 라이브 임베드가 있는 채널에서만 허용
         raid_ch_id = int(raid["channel_id"])
         if interaction.channel_id != raid_ch_id:
-            await interaction.response.send_message(
-                f"이 명령은 <#{raid_ch_id}> 채널에서만 사용할 수 있어요.",
-                ephemeral=True, allowed_mentions=SILENT,
-            )
+            try:
+                await interaction.edit_original_response(
+                    content=f"이 명령은 <#{raid_ch_id}> 채널에서만 사용할 수 있어요.",
+                )
+            except discord.HTTPException:
+                pass
             return
 
         # 참가자 등록(없으면 추가)
@@ -1414,8 +1425,11 @@ class Raid(commands.Cog):
             mana=mana,
             skill_cds_left=self._skill_cds_left(interaction.user.id),
         )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-        view._interaction = interaction
+        try:
+            await interaction.edit_original_response(embed=embed, view=view)
+            view._interaction = interaction
+        except discord.HTTPException as exc:
+            log.warning("레이드참가 패널 송신 실패: %s", exc)
 
     @app_commands.command(
         name="레이드소환",
