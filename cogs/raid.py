@@ -51,6 +51,7 @@ MENTION_USER = discord.AllowedMentions(users=True, roles=False, everyone=False)
 # ───────── 임베드/패널 갱신 정책 ─────────
 EMBED_DEBOUNCE = 2.0    # 마지막 행동 후 2초 대기 후 edit (D11)
 EMBED_HARD_CAP = 3.0    # 직전 edit 으로부터 최소 3초 간격 보장
+IDLE_REFRESH = 30.0     # 액션 없는 동안의 idle 갱신 주기(시간 카운트가 계속 흐르게)
 EMBED_LOG_LINES = 5     # "최근 5턴" 로그 줄 수
 TIMEOUT_CHECK = 10      # 시간 초과 확인 주기(초)
 PANEL_TIMEOUT = 60 * 14  # 14분 (Discord ephemeral 15분 한계 직전)
@@ -350,6 +351,9 @@ class Raid(commands.Cog):
         self._last_action_at: float = 0.0             # monotonic
         self._last_embed_edit: float = 0.0
         self._raid_lock = asyncio.Lock()              # 데미지 적용 직렬화
+        # 진행 중인 레이드 id 메모리 캐시 — 매 초 DB 조회 방지(Neon 친화)
+        # cog_load 에서 복구, summon_raid 에서 set, _end_raid 에서 clear
+        self._active_raid_id: Optional[int] = None
 
     # ------------------------------------------------------------ 마나 헬퍼
     def _refresh_mana(self, user_id: int, stats: dict) -> tuple[float, int]:
@@ -407,9 +411,18 @@ class Raid(commands.Cog):
 
     async def cog_load(self) -> None:
         log.info(
-            "Raid cog 로드 — Phase 3.5 (보스 %d종, 특성 %d종, 데미지타입 3, 디바운스 %.0fs/캡 %.0fs)",
-            len(BOSSES), len(TRAITS), EMBED_DEBOUNCE, EMBED_HARD_CAP,
+            "Raid cog 로드 — Phase 3.5 (보스 %d종, 특성 %d종, 데미지타입 3, 디바운스 %.0fs/캡 %.0fs/idle %.0fs)",
+            len(BOSSES), len(TRAITS), EMBED_DEBOUNCE, EMBED_HARD_CAP, IDLE_REFRESH,
         )
+        # 봇 재시작 시 진행 중이던 active 레이드 복구 (id 만 캐시)
+        try:
+            row = await self.db.get_active_raid(self.guild_id)
+            if row is not None:
+                self._active_raid_id = int(row["id"])
+                # 처음 1회는 즉시 갱신되도록 last_embed_edit 안 건드림 → 0.0 이라서 즉시 idle tick
+                log.info("active 레이드 복구: id=%s", self._active_raid_id)
+        except Exception:  # noqa: BLE001
+            log.warning("active 레이드 복구 실패", exc_info=True)
         self.embed_update_loop.start()
         self.timeout_loop.start()
         self.regen_loop.start()
@@ -786,18 +799,30 @@ class Raid(commands.Cog):
     # ------------------------------------------------------------ 라이브 임베드 갱신 루프
     @tasks.loop(seconds=1)
     async def embed_update_loop(self) -> None:
-        if not self._embed_dirty:
+        # active 레이드 없으면 DB 조회 없이 즉시 종료 (Neon 친화)
+        if self._active_raid_id is None:
+            self._embed_dirty = False
             return
         now = time.monotonic()
-        if now - self._last_action_at < EMBED_DEBOUNCE:
-            return
-        if now - self._last_embed_edit < EMBED_HARD_CAP:
+        # 갱신 트리거 결정:
+        #  (A) dirty (액션 발생) + 디바운스 + 하드 캡 통과
+        #  (B) idle 이지만 마지막 edit 으로부터 IDLE_REFRESH 경과 → 시간 카운트 갱신
+        do_update = False
+        if self._embed_dirty:
+            if (now - self._last_action_at >= EMBED_DEBOUNCE
+                    and now - self._last_embed_edit >= EMBED_HARD_CAP):
+                do_update = True
+        elif now - self._last_embed_edit >= IDLE_REFRESH:
+            do_update = True
+        if not do_update:
             return
         if GUARD.is_paused():
             return
+        # 여기서만 DB 조회 (1초마다 X)
         raid = await self._get_active()
         if raid is None or raid.get("message_id") is None:
             self._embed_dirty = False
+            self._active_raid_id = None
             return
         channel = self.bot.get_channel(int(raid["channel_id"]))
         if not isinstance(channel, discord.TextChannel):
@@ -1169,6 +1194,7 @@ class Raid(commands.Cog):
         self._mana.clear()
         self._mana_last_update.clear()
         self._embed_dirty = False
+        self._active_raid_id = None
 
     # ------------------------------------------------------------ 드롭 + 룰렛 (Phase 3)
     async def _award_drops(
@@ -1530,6 +1556,11 @@ class Raid(commands.Cog):
             await self.db.set_raid_message_id(raid_id, msg.id)
         except Exception:  # noqa: BLE001
             log.warning("message_id 저장 실패", exc_info=True)
+
+        # 메모리 캐시 + idle 갱신 타이머 기준점 설정
+        self._active_raid_id = raid_id
+        self._last_embed_edit = time.monotonic()
+        self._embed_dirty = False
 
         await interaction.followup.send(
             f"{boss.emoji} **{boss.name}** 소환! {target_channel.mention} 에서 진행 중.\n"
