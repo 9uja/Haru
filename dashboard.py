@@ -49,6 +49,33 @@ ENV_PATH = PROJECT_DIR / ".env"
 ENV_EXAMPLE_PATH = PROJECT_DIR / ".env.example"
 SETTINGS_PATH = PROJECT_DIR / "dashboard_settings.json"
 LOG_DIR = PROJECT_DIR / "logs"
+BACKUP_DIR = PROJECT_DIR / "backups"
+
+# 편집 가능한 콘텐츠 config 파일들 (탭 이름 → 경로, 검증 모듈명, 컬렉션 이름)
+EDITABLE_CONFIGS: list[dict] = [
+    {
+        "label": "🐉  보스",
+        "path": PROJECT_DIR / "raid_config.py",
+        "module": "raid_config",
+        "collection": "BOSSES",
+        "guide": (
+            "raid_config.py 의 BOSSES dict 를 직접 편집합니다.\n"
+            "필요한 import 와 dict 끝의 닫는 괄호 } 를 유지하세요.\n"
+            "타입은 raid_core.py 의 BossDef / PhaseDef / DropEntry 참고."
+        ),
+    },
+    {
+        "label": "⚔️  스킬",
+        "path": PROJECT_DIR / "skill_config.py",
+        "module": "skill_config",
+        "collection": "SKILLS",
+        "guide": (
+            "skill_config.py 의 SKILLS dict 와 ATK_FORMULA 를 편집합니다.\n"
+            "스킬 추가는 SkillDef(key=..., requirements=..., formula=DamageFormula(...)) 형식.\n"
+            "코그 측 dispatch 가 필요한 신규 스킬은 raid.py 도 같이 수정해야 합니다."
+        ),
+    },
+]
 
 
 class HaruBotDashboard:
@@ -145,6 +172,10 @@ class HaruBotDashboard:
 
         self._build_log_tab(notebook)
         self._build_env_tab(notebook)
+        # 콘텐츠 config 편집 탭들 (보스 / 스킬 / 추후 추가)
+        self.config_editors: dict[str, dict] = {}  # path → {widget, status_label, ...}
+        for cfg in EDITABLE_CONFIGS:
+            self._build_config_tab(notebook, cfg)
         self._build_host_tab(notebook)
         self._build_about_tab(notebook)
 
@@ -312,6 +343,315 @@ class HaruBotDashboard:
         except Exception as e:
             messagebox.showerror("레지스트리 오류", str(e))
             self.auto_start_with_windows.set(not self.auto_start_with_windows.get())
+
+    # ─────────────────────────────────────── 콘텐츠 config 편집 ────────
+    def _build_config_tab(self, nb: ttk.Notebook, cfg: dict) -> None:
+        tab = tk.Frame(nb)
+        nb.add(tab, text=cfg["label"])
+        path: Path = cfg["path"]
+
+        # 안내문
+        guide = tk.Label(
+            tab, anchor=tk.W, justify=tk.LEFT, padx=10,
+            text=cfg["guide"],
+        )
+        guide.pack(fill=tk.X, pady=(8, 4))
+
+        # 상태/경로 행
+        info_bar = tk.Frame(tab)
+        info_bar.pack(fill=tk.X, padx=10)
+        tk.Label(info_bar, text=f"파일: {path.name}", fg="#666").pack(side=tk.LEFT)
+        status_lbl = tk.Label(info_bar, text="", fg="#d97706", font=("Segoe UI", 9, "bold"))
+        status_lbl.pack(side=tk.RIGHT)
+
+        # 에디터
+        editor = scrolledtext.ScrolledText(
+            tab, wrap=tk.NONE, font=("Consolas", 10),
+            bg="#1e1e1e", fg="#d4d4d4", insertbackground="white",
+            undo=True, maxundo=200,
+        )
+        editor.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # 가벼운 키워드 강조 (커밋 시점에 한번 적용 — 입력 중 갱신은 비용 큼)
+        editor.tag_config("kw", foreground="#c586c0")
+        editor.tag_config("str", foreground="#ce9178")
+        editor.tag_config("num", foreground="#b5cea8")
+        editor.tag_config("cmt", foreground="#6a9955")
+
+        # 버튼 행
+        btn_bar = tk.Frame(tab)
+        btn_bar.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        # 편집 변경 추적
+        def on_change(_e=None) -> None:
+            status_lbl.config(text="● 수정됨 (저장 안 됨)", fg="#d97706")
+        editor.bind("<KeyRelease>", on_change)
+
+        tk.Button(
+            btn_bar, text="💾  저장 + 검증", bg="#2196f3", fg="white",
+            font=("Segoe UI", 10, "bold"), bd=0, padx=14, cursor="hand2",
+            command=lambda p=path, e=editor, s=status_lbl, c=cfg: self._save_config(p, e, s, c),
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            btn_bar, text="다시 읽기", cursor="hand2",
+            command=lambda p=path, e=editor, s=status_lbl: self._load_config(p, e, s),
+        ).pack(side=tk.LEFT, padx=6)
+        tk.Button(
+            btn_bar, text="저장 후 봇 재시작", cursor="hand2",
+            command=lambda p=path, e=editor, s=status_lbl, c=cfg:
+                self._save_and_restart(p, e, s, c),
+        ).pack(side=tk.LEFT, padx=6)
+        tk.Button(
+            btn_bar, text="백업 보기/복원", cursor="hand2",
+            command=lambda p=path: self._show_backups(p),
+        ).pack(side=tk.LEFT, padx=6)
+
+        # 등록 + 초기 로드
+        self.config_editors[str(path)] = {
+            "editor": editor, "status": status_lbl, "cfg": cfg,
+        }
+        self._load_config(path, editor, status_lbl)
+
+    def _load_config(
+        self, path: Path, editor: scrolledtext.ScrolledText, status: tk.Label
+    ) -> None:
+        editor.delete("1.0", tk.END)
+        if path.exists():
+            try:
+                editor.insert("1.0", path.read_text(encoding="utf-8"))
+                status.config(text=f"읽음 — 마지막 수정 {self._fmt_mtime(path)}", fg="#4caf50")
+            except Exception as e:
+                editor.insert("1.0", f"# 읽기 실패: {e}\n")
+                status.config(text="읽기 오류", fg="#f44336")
+        else:
+            editor.insert("1.0", f"# {path.name} 파일이 없습니다.\n")
+            status.config(text="파일 없음", fg="#f44336")
+        editor.edit_reset()  # undo 스택 초기화
+
+    @staticmethod
+    def _fmt_mtime(path: Path) -> str:
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return "?"
+
+    def _save_config(
+        self, path: Path, editor: scrolledtext.ScrolledText,
+        status: tk.Label, cfg: dict,
+    ) -> bool:
+        """저장 절차: 구문 → 백업 → 디스크 쓰기 → import 검증. 성공 시 True."""
+        code = editor.get("1.0", "end-1c").rstrip() + "\n"
+
+        # 1) 구문 검사
+        try:
+            compile(code, path.name, "exec")
+        except SyntaxError as e:
+            messagebox.showerror(
+                "구문 오류",
+                f"{path.name} 줄 {e.lineno}: {e.msg}\n\n"
+                f"저장하지 않았습니다. 코드를 수정한 뒤 다시 시도하세요.",
+            )
+            status.config(text=f"구문 오류 (줄 {e.lineno})", fg="#f44336")
+            return False
+
+        # 2) 백업
+        backup_subdir = BACKUP_DIR / path.stem
+        backup_subdir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = backup_subdir / f"{path.stem}-{stamp}{path.suffix}"
+        try:
+            if path.exists():
+                backup_path.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            # 백업 10개 초과 시 가장 오래된 것 삭제
+            backups = sorted(backup_subdir.glob(f"{path.stem}-*{path.suffix}"))
+            for old in backups[:-10]:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+        except Exception as e:
+            if not messagebox.askyesno(
+                "백업 실패",
+                f"백업 생성 실패: {e}\n\n그래도 저장할까요?",
+            ):
+                return False
+
+        # 3) 디스크 쓰기
+        try:
+            path.write_text(code, encoding="utf-8")
+        except Exception as e:
+            messagebox.showerror("저장 실패", str(e))
+            status.config(text="저장 실패", fg="#f44336")
+            return False
+
+        # 4) venv Python 으로 import 검증 (frozen exe 에서도 동작)
+        ok, msg = self._validate_config(cfg["module"], cfg["collection"])
+        if ok:
+            status.config(text=f"✅ 저장됨 — {msg}", fg="#4caf50")
+            self._log(
+                f"━━━━━ {path.name} 저장 완료: {msg} (봇 재시작 시 반영) ━━━━━\n",
+                "SYS",
+            )
+            messagebox.showinfo(
+                "저장 완료",
+                f"{path.name} 저장 + 검증 통과.\n{msg}\n\n"
+                "봇을 재시작해야 새 설정이 반영됩니다.",
+            )
+            return True
+        else:
+            status.config(text=f"⚠️ import 검증 실패", fg="#d97706")
+            messagebox.showwarning(
+                "import 검증 실패",
+                f"파일은 저장됐지만 검증에 실패했어요:\n\n{msg}\n\n"
+                f"이전 버전은 backups/{path.stem}/ 폴더에 있어요.\n"
+                "코드를 다시 확인하세요.",
+            )
+            return False
+
+    def _save_and_restart(
+        self, path: Path, editor: scrolledtext.ScrolledText,
+        status: tk.Label, cfg: dict,
+    ) -> None:
+        if not self._save_config(path, editor, status, cfg):
+            return
+        if self.bot_process and self.bot_process.poll() is None:
+            self._log("config 저장 → 봇 재시작 진행...\n", "SYS")
+            self.manual_stop = True
+            self.stop_bot()
+            self.root.after(2000, self.start_bot)
+        else:
+            self.start_bot()
+
+    def _validate_config(self, module: str, collection: str) -> tuple[bool, str]:
+        """venv Python 으로 모듈을 import 해서 컬렉션 길이를 확인.
+        대시보드가 frozen exe 여도 venv Python 을 호출하므로 디스코드 등 의존성 OK.
+        """
+        if not VENV_PYTHON.exists():
+            return False, ".venv 의 python 을 찾지 못해 검증을 건너뜁니다."
+        code = (
+            f"import sys, json; sys.path.insert(0, r'{PROJECT_DIR}'); "
+            f"m = __import__('{module}'); "
+            f"obj = getattr(m, '{collection}'); "
+            f"keys = list(obj.keys()) if hasattr(obj, 'keys') else []; "
+            f"print(json.dumps({{'n': len(obj), 'keys': keys}}, ensure_ascii=False))"
+        )
+        try:
+            r = subprocess.run(
+                [str(VENV_PYTHON), "-c", code],
+                cwd=str(PROJECT_DIR),
+                capture_output=True, text=True, encoding="utf-8", timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            return False, "검증 타임아웃 (15초)"
+        except Exception as e:
+            return False, f"검증 실행 실패: {e}"
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout).strip().splitlines()
+            tail = "\n".join(err[-8:]) if err else "(no output)"
+            return False, tail
+        try:
+            import json as _json
+            data = _json.loads(r.stdout.strip().splitlines()[-1])
+            keys = ", ".join(data["keys"][:5])
+            if len(data["keys"]) > 5:
+                keys += f", ... (총 {data['n']}개)"
+            return True, f"{collection} = {data['n']}개  [{keys}]"
+        except Exception:
+            return True, r.stdout.strip()
+
+    def _show_backups(self, path: Path) -> None:
+        backup_subdir = BACKUP_DIR / path.stem
+        if not backup_subdir.exists():
+            messagebox.showinfo("백업 없음", f"{path.name} 의 백업이 아직 없어요.")
+            return
+        backups = sorted(backup_subdir.glob(f"{path.stem}-*{path.suffix}"), reverse=True)
+        if not backups:
+            messagebox.showinfo("백업 없음", f"{path.name} 의 백업이 아직 없어요.")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title(f"{path.name} — 백업 목록")
+        win.geometry("640x420")
+        win.transient(self.root)
+
+        tk.Label(
+            win, anchor=tk.W, justify=tk.LEFT, padx=10, pady=10,
+            text=(
+                f"{path.name} 의 자동 백업 (최신순, 최대 10개 보관).\n"
+                "복원하면 현재 파일이 선택한 백업 내용으로 덮어쓰이고,\n"
+                "현재 파일도 다시 백업됩니다."
+            ),
+        ).pack(fill=tk.X)
+
+        lst_frame = tk.Frame(win)
+        lst_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        lst = tk.Listbox(lst_frame, font=("Consolas", 9))
+        sb = tk.Scrollbar(lst_frame, orient=tk.VERTICAL, command=lst.yview)
+        lst.config(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        lst.pack(fill=tk.BOTH, expand=True)
+        for b in backups:
+            size = b.stat().st_size
+            mtime = datetime.fromtimestamp(b.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            lst.insert(tk.END, f"{mtime}   {size:>7,} B   {b.name}")
+
+        btn_bar = tk.Frame(win)
+        btn_bar.pack(fill=tk.X, padx=10, pady=8)
+
+        def do_restore() -> None:
+            sel = lst.curselection()
+            if not sel:
+                messagebox.showinfo("선택 필요", "복원할 백업을 선택하세요.")
+                return
+            chosen = backups[sel[0]]
+            if not messagebox.askyesno(
+                "복원 확인",
+                f"{chosen.name} 로 {path.name} 을 복원할까요?\n"
+                "(현재 파일도 자동 백업됩니다.)",
+            ):
+                return
+            # 현재를 백업
+            try:
+                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                cur_bak = backup_subdir / f"{path.stem}-{stamp}-before-restore{path.suffix}"
+                if path.exists():
+                    cur_bak.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+                # 복원
+                path.write_text(chosen.read_text(encoding="utf-8"), encoding="utf-8")
+            except Exception as e:
+                messagebox.showerror("복원 실패", str(e))
+                return
+            # 에디터 다시 읽기
+            ed = self.config_editors.get(str(path))
+            if ed is not None:
+                self._load_config(path, ed["editor"], ed["status"])
+            messagebox.showinfo("복원 완료", f"{chosen.name} 로 복원했어요.\n봇 재시작 필요.")
+            win.destroy()
+
+        def do_preview() -> None:
+            sel = lst.curselection()
+            if not sel:
+                return
+            chosen = backups[sel[0]]
+            pv = tk.Toplevel(win)
+            pv.title(f"미리보기 — {chosen.name}")
+            pv.geometry("760x520")
+            text = scrolledtext.ScrolledText(
+                pv, font=("Consolas", 10), wrap=tk.NONE,
+            )
+            text.pack(fill=tk.BOTH, expand=True)
+            try:
+                text.insert("1.0", chosen.read_text(encoding="utf-8"))
+            except Exception as e:
+                text.insert("1.0", f"# 읽기 실패: {e}")
+            text.config(state=tk.DISABLED)
+
+        tk.Button(btn_bar, text="미리보기", command=do_preview).pack(side=tk.LEFT)
+        tk.Button(
+            btn_bar, text="이 백업으로 복원", bg="#f44336", fg="white",
+            font=("Segoe UI", 9, "bold"), bd=0, padx=10, cursor="hand2",
+            command=do_restore,
+        ).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_bar, text="닫기", command=win.destroy).pack(side=tk.RIGHT)
 
     def _build_about_tab(self, nb: ttk.Notebook) -> None:
         tab = tk.Frame(nb)

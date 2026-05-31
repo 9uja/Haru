@@ -13,6 +13,9 @@ dist/
 *.spec
 dashboard_settings.json
 
+# 대시보드 자동 백업 (config 편집 이력)
+backups/
+
 # Python
 __pycache__/
 *.py[cod]
