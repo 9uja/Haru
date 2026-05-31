@@ -136,7 +136,7 @@ class StatsRPG(commands.Cog):
             ),
             inline=False,
         )
-        embed.set_footer(text="/능력치분배 로 분배 · /능력치리셋 으로 초기화")
+        embed.set_footer(text="/능력치분배 로 미분배 포인트를 배정")
         await interaction.followup.send(embed=embed, ephemeral=ephemeral)
 
     # ------------------------------------------------------------ 슬래시: /능력치분배
@@ -189,37 +189,7 @@ class StatsRPG(commands.Cog):
             except Exception:  # noqa: BLE001
                 log.debug("스킬 해방 체크 실패(스탯분배)", exc_info=True)
 
-    # ------------------------------------------------------------ 슬래시: /능력치리셋
-    @app_commands.command(
-        name="능력치리셋",
-        description="모든 분배 포인트를 환수합니다. 분배 이력도 함께 비워집니다.",
-    )
-    @app_commands.describe(확인="True 로 설정해야 실제로 초기화됩니다.")
-    async def reset_stats(
-        self, interaction: discord.Interaction, 확인: bool = False
-    ) -> None:
-        if interaction.guild_id is None:
-            await interaction.response.send_message("서버에서만 사용할 수 있어요.", ephemeral=True)
-            return
-        if not 확인:
-            await interaction.response.send_message(
-                "⚠️ 정말로 초기화하려면 `확인:True` 옵션을 함께 입력하세요. "
-                "분배 이력이 비워져 이후 레벨 손실 시 환불할 이전 분배가 없습니다.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.defer(ephemeral=True)
-        try:
-            await self.db.reset_user_stats(interaction.guild_id, interaction.user.id)
-        except Exception:  # noqa: BLE001
-            log.warning("스탯 리셋 실패", exc_info=True)
-            await interaction.followup.send("DB 처리에 실패했어요.", ephemeral=True)
-            return
-        lv, _, unspent = await self._gather(interaction.guild_id, interaction.user.id)
-        await interaction.followup.send(
-            f"✅ 모든 스탯을 초기화했어요. 현재 Lv {lv} · 미분배 **{unspent}** 포인트.",
-            ephemeral=True,
-        )
+    # (구버전 /능력치리셋 명령은 제거됨 — DB 메서드는 오너 디버그/관리용으로 유지)
 
 
 async def setup(bot: commands.Bot) -> None:
