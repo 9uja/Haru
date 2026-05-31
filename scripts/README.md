@@ -4,6 +4,28 @@
 
 ## Windows 로컬 호스팅
 
+### 🎮 dashboard.py / build_dashboard.bat (가장 편한 방법)
+GUI 대시보드. 시작/중지 버튼 + 실시간 로그 + `.env` 편집 + 자동시작 토글.
+
+**바로 실행:**
+```cmd
+.\.venv\Scripts\python.exe dashboard.py
+```
+
+**`.exe` 빌드 (한 번만):**
+```cmd
+.\scripts\build_dashboard.bat
+```
+→ `dist\HaruBotDashboard.exe` 생성. 더블클릭으로 GUI 실행.
+바탕화면 바로가기 만들면 클릭 한 번으로 봇 켜고 끄기 가능.
+
+기능:
+- ▶ 시작 / ■ 중지 버튼 (F5/F6 단축키)
+- 실시간 로그 뷰 (INFO/WARN/ERROR 색상 구분, 자동 스크롤)
+- `.env` 편집 — 토큰/DB URL 등 GUI 에서 편집·저장
+- 크래시 시 자동 재시작 (5초 후, 정상 중지는 재시작 안 함)
+- Windows 부팅 시 자동 실행 (레지스트리 자동 설정)
+
 ### run_local.bat
 가장 간단한 자동 재시작 배치. 더블클릭하면 봇이 실행되고, 크래시 시
 5초 후 자동 재시작. 터미널 창을 닫으면 종료.

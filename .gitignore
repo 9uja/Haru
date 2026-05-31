@@ -7,6 +7,12 @@
 # 배포 산출물 (재생성 가능)
 HaruBot-deploy-*.zip
 
+# PyInstaller 산출물 (dashboard.exe 빌드)
+build/
+dist/
+*.spec
+dashboard_settings.json
+
 # Python
 __pycache__/
 *.py[cod]

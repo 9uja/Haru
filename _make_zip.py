@@ -19,6 +19,7 @@ INCLUDE = [
     "keepalive.py", "views.py", "requirements.txt", "Dockerfile",
     "start.sh", ".dockerignore", ".env.example", "README.md",
     "raid_core.py", "raid_config.py", "skill_config.py",
+    "dashboard.py",
     "cogs", "deploy", "docs", "assets", "scripts",
 ]
 
