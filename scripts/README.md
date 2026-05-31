@@ -2,6 +2,31 @@
 
 운영용 보조 스크립트.
 
+## Windows 로컬 호스팅
+
+### run_local.bat
+가장 간단한 자동 재시작 배치. 더블클릭하면 봇이 실행되고, 크래시 시
+5초 후 자동 재시작. 터미널 창을 닫으면 종료.
+
+### run_local.ps1
+PowerShell 버전. 동일한 기능 + `logs/bot-YYYYMMDD.log` 에 자동 기록.
+처음 실행 시 정책 차단되면:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+### install_windows_service.md
+NSSM 으로 Windows 서비스로 등록하는 가이드. 부팅 시 자동 시작,
+백그라운드 실행, 로그인 안 해도 동작.
+
+### 부팅 시 자동 시작 (서비스 안 쓰는 경우)
+```
+Win+R → shell:startup → 엔터
+→ run_local.bat 의 바로가기를 만들어 이 폴더에 넣기
+```
+
+---
+
 ## oracle_setup.sh
 
 Oracle Cloud VM 첫 셋업 자동화.
