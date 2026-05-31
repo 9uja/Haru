@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 MSG_XP = 1
 MSG_COOLDOWN = timedelta(seconds=60)
 VOICE_TICK = timedelta(minutes=5)
-VOICE_XP_PER_TICK = 60
+VOICE_XP_PER_TICK = 30  # 60 → 30 (서버 장기 진행감 확보, 2026-05-31)
 VOICE_MIN_PEERS = 2
 MIN_MSG_CHARS = 2
 MAX_LEVEL = 999
@@ -115,12 +115,13 @@ def _pick_drop() -> Item:
 
 # ───────── 레벨 곡선 ─────────
 def xp_for_next_level(level: int) -> int:
-    """L → L+1 로 가기 위해 필요한 XP. 메이플 클래식 곡선 영감 (L1=15, L999 도달 가능)."""
-    if level < 1:
-        return 15
-    if level >= MAX_LEVEL:
+    """L → L+1 로 가기 위해 필요한 XP. 메이플 영감 곡선.
+    2026-05-31 조정: (0.5, 5, 10) → (0.7, 6, 12) 로 가팔라짐.
+      Lv 30 누적 6,745 → 8,945 / Lv 50 26,825 → 36,225 / Lv 100 190k → 261k
+    """
+    if level < 0 or level >= MAX_LEVEL:
         return 0  # MAX 도달 시 더 진행 X
-    return int(0.5 * level * level + 5 * level + 10)
+    return int(0.7 * level * level + 6 * level + 12)
 
 
 def level_from_xp(total_xp: int) -> tuple[int, int, int]:
