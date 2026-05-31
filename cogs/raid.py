@@ -776,20 +776,7 @@ class Raid(commands.Cog):
                 tops.append(f"{head} <@{int(p['user_id'])}> — {int(p['total_damage']):,}")
             embed.add_field(name="TOP 데미지", value="\n".join(tops), inline=False)
 
-        # 참여 방법 안내 (임베드 본문 마지막 필드) — 스킬 이모지는 SKILLS 에서 동적 산출
-        skill_emojis = "".join(sk.emoji for sk in SKILLS.values())
-        embed.add_field(
-            name="📢 참여 방법 — `/레이드참가`",
-            value=(
-                "🎮 **`/레이드참가`** 를 입력하면 본인 전용 전투 패널이 열립니다.\n"
-                f"ㆍ 패널의 ⚔️ **평타** 또는 {skill_emojis} **스킬** 버튼으로 보스 공격\n"
-                "ㆍ 본인만 보이는 ephemeral 패널 — 약 14분 후 만료 시 다시 입력\n"
-                "ㆍ 한 번이라도 행동 → **데미지 비율**로 보상 정산 (위로 보상 포함)\n"
-                "🏆 결정타를 친 유저는 **별도 룰렛 1회** 추가 굴림 (희귀 ↑)"
-            ),
-            inline=False,
-        )
-        embed.set_footer(text="이 채널 외에서 입력하면 동작하지 않습니다.")
+        embed.set_footer(text="/레이드참가 · 이 채널에서만")
         return embed
 
     def _mark_dirty(self) -> None:

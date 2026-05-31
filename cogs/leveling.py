@@ -484,7 +484,6 @@ class Leveling(commands.Cog):
                 value=f"**x{mult:g}** — 남은 시간 {_fmt_remaining(boost['expires_at'])}",
                 inline=False,
             )
-        embed.set_footer(text="메시지 1/60s · 음성 60/5min(2명↑) · 곡선: 메이플 영감")
         await interaction.followup.send(embed=embed, ephemeral=ephemeral)
 
     # ------------------------------------------------------------ 슬래시: /랭킹
@@ -520,7 +519,6 @@ class Leveling(commands.Cog):
             color=discord.Color.gold(),
             timestamp=datetime.now(timezone.utc),
         )
-        embed.set_footer(text=f"곡선: 0.5L²+5L+10 (메이플 영감) · 최대 Lv {MAX_LEVEL}")
         await interaction.followup.send(embed=embed, allowed_mentions=SILENT)
 
     # ------------------------------------------------------------ 슬래시: /인벤토리
